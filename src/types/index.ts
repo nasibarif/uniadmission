@@ -533,3 +533,49 @@ export interface CounselorRosterStudent {
   hasGrantedCounselorAccess: boolean;
 }
 
+// -------------------------------------------------------------
+// Production Fixation: bKash MFS Integration & Audit Types
+// -------------------------------------------------------------
+export type BkashTransactionStatus = 
+  | 'initiated' 
+  | 'pending' 
+  | 'completed' 
+  | 'failed' 
+  | 'cancelled' 
+  | 'refunded' 
+  | 'verification_failed';
+
+export interface BkashPaymentTransaction {
+  id: string;
+  userId: string;
+  provider: 'bkash';
+  paymentId: string;
+  trxId?: string;
+  customerAccount?: string;
+  planId: UserTier;
+  amount: number;
+  currency: 'BDT';
+  status: BkashTransactionStatus;
+  failureReason?: string;
+  merchantInvoiceNumber?: string;
+  createdAt: string;
+  verifiedAt?: string;
+  updatedAt?: string;
+}
+
+export interface BkashCreatePaymentResponse {
+  success: boolean;
+  paymentId?: string;
+  merchantInvoiceNumber?: string;
+  amount?: number;
+  currency: 'BDT';
+  merchantAccountNumber: string;
+  error?: string;
+}
+
+export interface BkashVerifyPaymentResponse {
+  success: boolean;
+  transaction?: BkashPaymentTransaction;
+  error?: string;
+}
+

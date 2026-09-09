@@ -26,7 +26,6 @@ import { UniversityDataService } from '../services/universityDataService';
 import { ApplicationReadinessEngine } from '../services/applicationReadinessEngine';
 import { RoadmapService } from '../services/roadmapService';
 import { validateDossierJson, type ValidatedDossier, type ValidationResult } from '../schemas/dossierSchema';
-import confetti from 'canvas-confetti';
 
 export interface AdmissionDossierExport {
   version: string;
@@ -240,51 +239,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveTab('dashboard');
   };
 
+  // Secure Entitlements Sync: Server & Database Authoritative
   const refreshEntitlements = useCallback(async () => {
     if (currentUser) {
       const sub = await SubscriptionService.fetchUserSubscription(currentUser.id);
       if (sub && sub.tier) {
         setUserTier(sub.tier);
+      } else {
+        const userData = await AuthService.fetchUserData(currentUser.id);
+        if (userData?.account?.tier) {
+          setUserTier(userData.account.tier);
+        }
       }
     }
   }, [currentUser]);
 
-  const initiateCheckout = async (targetTier: UserTier): Promise<{ success: boolean; checkoutUrl?: string; error?: string }> => {
-    const result = await SubscriptionService.createCheckoutSession(targetTier, currentUser);
-    if (result.success) {
-      if (result.isSandbox && result.checkoutUrl) {
-        // Local sandbox development: simulate verified purchase flow
-        setUserTier(targetTier);
-        if (currentUser) {
-          await AuthService.saveUserData(currentUser.id, {
-            account: { tier: targetTier }
-          });
-        }
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.6 }
-        });
-        setIsUpgradeModalOpen(false);
-      } else if (result.checkoutUrl) {
-        window.location.href = result.checkoutUrl;
-      }
+  const initiateCheckout = async (_targetTier: UserTier): Promise<{ success: boolean; checkoutUrl?: string; error?: string }> => {
+    if (!currentUser) {
+      return { success: false, error: 'Please sign in before upgrading your plan.' };
     }
-    return result;
+    // Open the upgrade/bKash payment modal
+    setIsUpgradeModalOpen(true);
+    return { success: true };
   };
 
-  // Sync entitlements or check checkout return parameters
+  // Secure checkout return handler: Never trust URL parameters for tier elevation
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       if (params.get('checkout_success') === 'true' || params.get('upgrade_success') === 'true') {
-        const tierParam = params.get('tier') as UserTier;
-        if (tierParam) {
-          setUserTier(tierParam);
-          if (currentUser) {
-            AuthService.saveUserData(currentUser.id, { account: { tier: tierParam } });
-          }
-        }
+        // SECURITY HARDENING: Do NOT trust or read ?tier=... from URL query string
+        // Only trigger server-side entitlement refresh from verified database records
         refreshEntitlements();
         window.history.replaceState({}, document.title, window.location.pathname);
       }

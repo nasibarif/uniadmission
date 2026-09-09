@@ -7,6 +7,7 @@ import {
   CheckCircle2, 
   Clock, 
   AlertTriangle, 
+  AlertCircle, 
   FileText, 
   Trash2, 
   Download, 
@@ -1196,9 +1197,15 @@ export const DocumentVault: React.FC = () => {
                     </div>
                   ) : (
                     <p className="text-xs text-slate-500 italic">
-                      This document has not yet been audited. You can trigger an automated AI Pre-Check or request senior advisor review.
+                      This document has not yet been audited. You can trigger an automated Document Integrity Pre-Check or request senior advisor review.
                     </p>
                   )}
+
+                  {/* Transparent Non-Official Verification Disclaimer */}
+                  <div className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-200/80 text-[11px] text-amber-800 flex items-start gap-2 mt-2">
+                    <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                    <span><strong>Integrity Notice:</strong> Evaluates format, readability, and required application fields. Does not constitute official issuing-authority verification.</span>
+                  </div>
                 </div>
 
                 {/* Trigger Verification Actions */}
@@ -1209,7 +1216,7 @@ export const DocumentVault: React.FC = () => {
                     className="flex-1 px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50"
                   >
                     {isVerifyingAi ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                    <span>Run Automated AI Pre-Check</span>
+                    <span>Run Document Integrity Pre-Check</span>
                   </button>
 
                   <button

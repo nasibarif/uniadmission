@@ -40,6 +40,7 @@ async function saveFileToIndexedDB(
   fileName: string,
   mimeType: string
 ): Promise<void> {
+  if (typeof window === 'undefined' || !window.indexedDB) return;
   try {
     const db = await openIndexedDB();
     await new Promise<void>((resolve, reject) => {
@@ -64,6 +65,7 @@ async function saveFileToIndexedDB(
  * Retrieve binary file from IndexedDB.
  */
 async function getFileFromIndexedDB(storagePath: string): Promise<Blob | null> {
+  if (typeof window === 'undefined' || !window.indexedDB) return null;
   try {
     const db = await openIndexedDB();
     return await new Promise<Blob | null>((resolve, reject) => {
@@ -89,6 +91,7 @@ async function getFileFromIndexedDB(storagePath: string): Promise<Blob | null> {
  * Delete binary file from IndexedDB.
  */
 async function deleteFileFromIndexedDB(storagePath: string): Promise<void> {
+  if (typeof window === 'undefined' || !window.indexedDB) return;
   try {
     const db = await openIndexedDB();
     await new Promise<void>((resolve, reject) => {
@@ -144,10 +147,10 @@ export class StorageService {
           });
 
         if (error) {
-          console.warn('[StorageService] Supabase upload returned error, retained in local store:', error.message);
+          throw new Error(`Cloud document storage upload failed: ${error.message}`);
         }
-      } catch (err) {
-        console.warn('[StorageService] Supabase storage upload exception:', err);
+      } catch (err: any) {
+        throw new Error(err?.message || 'Cloud storage upload exception occurred.');
       }
     }
 
@@ -220,13 +223,9 @@ export class StorageService {
       }
     }
 
-    // 3. Fallback: If no binary file exists yet (e.g. pre-Step 6 sample/mock documents)
+    // 3. Authoritative check: If no binary file exists, throw explicit error (no fake text files)
     if (!downloadUrl) {
-      console.warn(`[StorageService] No binary stored for "${doc.fileName}". Generating emergency fallback.`);
-      const infoText = `UniAdmission Document Record\nTitle: ${doc.title}\nCategory: ${doc.type}\nFile: ${doc.fileName}\nUploaded: ${doc.uploadDate}\nNote: Original file was not present in object storage.`;
-      const fallbackBlob = new Blob([infoText], { type: 'text/plain;charset=utf-8' });
-      downloadUrl = URL.createObjectURL(fallbackBlob);
-      shouldRevoke = true;
+      throw new Error(`Original document binary "${doc.fileName}" is unavailable in cloud storage. Please re-upload the document.`);
     }
 
     // Trigger browser file download

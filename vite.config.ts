@@ -81,6 +81,8 @@ function localSecurityAndGatewayPlugin(): Plugin {
   return {
     name: 'local-security-gateway',
     configureServer(server) {
+      const devSubscriptions = new Map<string, { tier: string; status: string; sessionId: string }>();
+
       // Global middleware to apply security headers to all HTTP responses
       server.middlewares.use((_req, res, next) => {
         for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
@@ -101,7 +103,7 @@ function localSecurityAndGatewayPlugin(): Plugin {
 
         if (req.method !== 'POST') {
           res.statusCode = 405;
-          res.end(JSON.stringify({ error: 'Method not allowed' }));
+          res.end(JSON.stringify({ success: false, error: 'Method not allowed' }));
           return;
         }
 
@@ -134,9 +136,12 @@ function localSecurityAndGatewayPlugin(): Plugin {
             }
 
             const payload = JSON.parse(body || '{}');
-            const tier = payload.tier || 'Explorer';
             const action = payload.action || 'general';
-            const userId = payload.userId || 'dev-user';
+
+            // Derive user identity and tier strictly on the server from session / dev subscriptions
+            const authHeader = (req.headers['authorization'] as string) || '';
+            const userId = authHeader.replace(/^Bearer\s+/i, '') || 'current-user';
+            const tier = devSubscriptions.get(userId)?.tier || 'Explorer';
 
             // Server-side Input Validation
             if (!ALLOWED_ACTIONS.has(action)) {
@@ -230,9 +235,7 @@ function localSecurityAndGatewayPlugin(): Plugin {
         });
       });
 
-      const devSubscriptions = new Map<string, { tier: string; status: string; sessionId: string }>();
-
-      // Dev Checkout Handler
+      // Dev Checkout Handler (Stripe excluded; sandbox fallback)
       server.middlewares.use('/api/checkout', (req, res) => {
         if (req.method === 'OPTIONS') {
           res.setHeader('Access-Control-Allow-Origin', '*');
@@ -266,7 +269,8 @@ function localSecurityAndGatewayPlugin(): Plugin {
                 success: true,
                 isSandbox: true,
                 sessionId,
-                checkoutUrl: `/?session_id=${sessionId}&tier=${tier}&checkout_success=true`,
+                // SECURITY: Never include ?tier=... in checkout return URL
+                checkoutUrl: `/?session_id=${sessionId}&checkout_success=true`,
                 message: 'Local sandbox checkout session created.',
               })
             );
@@ -274,6 +278,105 @@ function localSecurityAndGatewayPlugin(): Plugin {
             console.error('[Dev Checkout Error]:', err?.message || err);
             res.statusCode = 500;
             res.end(JSON.stringify({ success: false, error: 'Checkout session creation failed' }));
+          }
+        });
+      });
+
+      // bKash Create Payment Endpoint
+      server.middlewares.use('/api/bkash/create', (req, res) => {
+        if (req.method === 'OPTIONS') {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+          res.statusCode = 200;
+          res.end();
+          return;
+        }
+
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ error: 'Method not allowed' }));
+          return;
+        }
+
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+          res.setHeader('Content-Type', 'application/json');
+          try {
+            const { planId } = JSON.parse(body || '{}');
+            const bdtPrices: Record<string, number> = {
+              Free: 0,
+              Explorer: 1490,
+              Application: 3990,
+              Complete: 7990,
+              School: 19990,
+            };
+            const amount = bdtPrices[planId] ?? 1490;
+            const paymentId = `BK_PAY_${Date.now()}`;
+            const merchantInvoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
+
+            res.statusCode = 200;
+            res.end(JSON.stringify({
+              success: true,
+              paymentId,
+              merchantInvoiceNumber,
+              amount,
+              currency: 'BDT',
+              merchantAccountNumber: '01844-556677',
+            }));
+          } catch {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ success: false, error: 'Invalid create payment request' }));
+          }
+        });
+      });
+
+      // bKash Verify Payment Endpoint
+      server.middlewares.use('/api/bkash/verify', (req, res) => {
+        if (req.method === 'OPTIONS') {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+          res.statusCode = 200;
+          res.end();
+          return;
+        }
+
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ error: 'Method not allowed' }));
+          return;
+        }
+
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+          res.setHeader('Content-Type', 'application/json');
+          try {
+            const { paymentId, trxId, userId, planId } = JSON.parse(body || '{}');
+            const cleanedTrx = (trxId || '').trim().toUpperCase();
+
+            if (!/^[A-Z0-9]{8,12}$/.test(cleanedTrx)) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ success: false, error: 'Invalid TrxID format' }));
+              return;
+            }
+
+            const targetTier = planId || 'Explorer';
+            devSubscriptions.set(userId || 'current-user', { tier: targetTier, status: 'active', sessionId: paymentId });
+
+            res.statusCode = 200;
+            res.end(JSON.stringify({
+              success: true,
+              transaction: {
+                paymentId,
+                trxId: cleanedTrx,
+                status: 'completed',
+                planId: targetTier,
+              }
+            }));
+          } catch {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ success: false, error: 'Invalid verify payment request' }));
           }
         });
       });

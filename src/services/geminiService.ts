@@ -109,6 +109,7 @@ export class GeminiService {
         }
       }
 
+      // Send request to AI gateway (tier is authoritative on the server from JWT session)
       const response = await fetch('/api/ai', {
         method: 'POST',
         headers,
@@ -116,7 +117,6 @@ export class GeminiService {
           action,
           contents,
           model: this.selectedModel,
-          tier,
         }),
       });
 

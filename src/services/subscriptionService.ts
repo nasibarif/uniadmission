@@ -13,7 +13,10 @@ export interface SubscriptionInfo {
   tier: UserTier;
   status: 'active' | 'trialing' | 'canceled' | 'past_due' | 'expired';
   currentPeriodEnd?: string;
+  amountBdt?: number;
   amountUsd?: number;
+  currency?: string;
+  paymentProvider?: string;
 }
 
 export class SubscriptionService {
@@ -100,7 +103,10 @@ export class SubscriptionService {
             tier: (data.plan_id as UserTier) || 'Explorer',
             status: data.status,
             currentPeriodEnd: data.current_period_end,
+            amountBdt: Number(data.amount_bdt) || Number(data.amount_usd) || 0,
             amountUsd: Number(data.amount_usd) || 0,
+            currency: data.currency || 'BDT',
+            paymentProvider: data.payment_provider || 'bkash',
           };
         }
       } catch (err) {
@@ -116,6 +122,9 @@ export class SubscriptionService {
           return {
             tier: data.tier || 'Explorer',
             status: data.status || 'active',
+            amountBdt: data.amountBdt || 0,
+            currency: 'BDT',
+            paymentProvider: 'bkash',
           };
         }
       }
