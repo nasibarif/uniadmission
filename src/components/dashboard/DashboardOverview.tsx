@@ -1,6 +1,7 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { ApplicationReadinessEngine } from '../../services/applicationReadinessEngine';
+import { BestNextActionEngine } from '../../services/bestNextActionEngine';
 import { 
   Sparkles, 
   Building2, 
@@ -9,12 +10,15 @@ import {
   CheckCircle2, 
   Calendar, 
   ShieldCheck, 
-  Bot,
-  KanbanSquare,
-  Clock,
-  Target,
-  FileText,
-  FolderLock
+  Bot, 
+  KanbanSquare, 
+  Clock, 
+  Target, 
+  Check,
+  BellOff,
+  ChevronDown,
+  ChevronUp,
+  Zap
 } from 'lucide-react';
 
 export const DashboardOverview: React.FC = () => {
@@ -51,63 +55,27 @@ export const DashboardOverview: React.FC = () => {
   const approachingCount = appReadinessList.filter(a => a.deadlineInfo.urgencyBand === 'Approaching').length;
   const upcomingCount = appReadinessList.filter(a => a.deadlineInfo.urgencyBand === 'Upcoming' || a.deadlineInfo.urgencyBand === 'Future').length;
 
-  // Compute Today's Highest Impact Action (Step 24)
-  const computeHighestImpactAction = () => {
-    if (applications.length === 0) {
-      return {
-        title: 'Add Your First Target & Reach Universities',
-        description: 'You haven\'t added any universities to your Application Command Center yet. Selecting your initial portfolio establishes deadlines and required document checklists.',
-        impact: '+30% Readiness Boost',
-        targetTab: 'universities',
-        ctaText: 'Browse Matched Universities',
-        icon: Building2,
-        urgency: 'Medium'
-      };
-    }
+  // Step 43: Best-Next-Action Engine with Snooze & Prioritization
+  const [actionRefreshKey, setActionRefreshKey] = React.useState<number>(0);
+  const [showActionQueue, setShowActionQueue] = React.useState<boolean>(false);
 
-    // Check for urgent deadline apps first
-    const urgentApp = [...appReadinessList].sort((a, b) => a.deadlineInfo.daysRemaining - b.deadlineInfo.daysRemaining)[0];
-    
-    if (urgentApp && urgentApp.readiness.missingBlockers.length > 0) {
-      return {
-        title: `Resolve Blocker: ${urgentApp.app.universityName}`,
-        description: `${urgentApp.readiness.missingBlockers[0]} is required before submission. Deadline in ${urgentApp.deadlineInfo.daysRemaining} days (${urgentApp.deadlineInfo.formattedDeadline}).`,
-        impact: '+25% Application Readiness',
-        targetTab: 'applications',
-        ctaText: 'Open Application Checklist',
-        icon: Target,
-        urgency: urgentApp.deadlineInfo.daysRemaining <= 14 ? 'High' : 'Medium'
-      };
-    }
+  const rankedActions = React.useMemo(() => {
+    void actionRefreshKey;
+    return BestNextActionEngine.generateRankedActions(profile, applications, vaultDocuments || []);
+  }, [profile, applications, vaultDocuments, actionRefreshKey]);
 
-    // Check Vault documents
-    const hasTranscript = (vaultDocuments || []).some(d => d.type === 'Academic Transcript');
-    if (!hasTranscript) {
-      return {
-        title: 'Upload Official Academic Transcript to Vault',
-        description: 'Universities require verified transcripts. Storing your transcript in the Document Vault allows instant attachment across all applications.',
-        impact: '+20% Application Readiness',
-        targetTab: 'vault',
-        ctaText: 'Open Document Vault',
-        icon: FolderLock,
-        urgency: 'Medium'
-      };
-    }
+  const primaryAction = rankedActions[0];
+  const upcomingActions = rankedActions.slice(1, 4);
 
-    // Default: Draft SOP
-    return {
-      title: `Draft Statement of Purpose for ${applications[0]?.universityName || 'Target University'}`,
-      description: 'Use the AI SOP Studio to synthesize your academic accomplishments, leadership experiences, and institutional alignment into a competitive essay.',
-      impact: '+15% Committee Score',
-      targetTab: 'sop',
-      ctaText: 'Launch SOP Studio',
-      icon: FileText,
-      urgency: 'Medium'
-    };
+  const handleCompleteAction = (actionId: string) => {
+    BestNextActionEngine.completeAction(actionId);
+    setActionRefreshKey(k => k + 1);
   };
 
-  const highestImpactAction = computeHighestImpactAction();
-  const ActionIcon = highestImpactAction.icon;
+  const handleSnoozeAction = (actionId: string) => {
+    BestNextActionEngine.snoozeAction(actionId, 24);
+    setActionRefreshKey(k => k + 1);
+  };
 
   return (
     <div className="space-y-6 pb-12">
@@ -156,43 +124,116 @@ export const DashboardOverview: React.FC = () => {
         </div>
       </div>
 
-      {/* TODAY'S HIGHEST IMPACT ACTION CARD (Step 24) */}
-      <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-sm border border-blue-800/40 relative overflow-hidden">
-        <div className="absolute right-0 bottom-0 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+      {/* TODAY'S HIGHEST IMPACT ACTION CARD (Step 24 & Step 43) */}
+      {primaryAction && (
+        <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-sm border border-blue-800/40 relative overflow-hidden space-y-4">
+          <div className="absolute right-0 bottom-0 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
 
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-5">
-          <div className="space-y-2 max-w-2xl">
-            <div className="flex items-center gap-2">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-400 text-slate-950 flex items-center gap-1">
-                <Target className="h-3 w-3" />
-                <span>Today's Highest Impact Action</span>
-              </span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/10 text-blue-200 border border-white/10">
-                {highestImpactAction.impact}
-              </span>
+          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-5">
+            <div className="space-y-2 max-w-2xl">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-400 text-slate-950 flex items-center gap-1">
+                  <Target className="h-3 w-3" />
+                  <span>Today's Highest Impact Action</span>
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/10 text-blue-200 border border-white/10">
+                  {primaryAction.impactLabel}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
+                  Priority Score: {primaryAction.priorityScore}
+                </span>
+              </div>
+
+              <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                <Zap className="h-5 w-5 text-amber-400 shrink-0" />
+                <span>{primaryAction.title}</span>
+              </h2>
+
+              <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                {primaryAction.description}
+              </p>
             </div>
 
-            <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
-              <ActionIcon className="h-5 w-5 text-blue-400 shrink-0" />
-              <span>{highestImpactAction.title}</span>
-            </h2>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                onClick={() => setActiveTab(primaryAction.targetTab)}
+                className="px-5 py-2.5 rounded-xl bg-blue-500 hover:bg-blue-400 text-white font-bold text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-blue-500/25"
+              >
+                <span>{primaryAction.ctaText}</span>
+                <ArrowRight className="h-4 w-4" />
+              </button>
 
-            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-              {highestImpactAction.description}
-            </p>
+              <button
+                onClick={() => handleCompleteAction(primaryAction.id)}
+                title="Mark this action as completed"
+                className="px-3 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold transition flex items-center gap-1.5"
+              >
+                <Check className="h-4 w-4 text-emerald-400" />
+                <span>Done</span>
+              </button>
+
+              <button
+                onClick={() => handleSnoozeAction(primaryAction.id)}
+                title="Snooze for 24 hours"
+                className="px-3 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-slate-300 hover:text-white text-xs font-bold transition flex items-center gap-1.5"
+              >
+                <BellOff className="h-3.5 w-3.5 text-amber-400" />
+                <span>Snooze (24h)</span>
+              </button>
+            </div>
           </div>
 
-          <div className="shrink-0">
-            <button
-              onClick={() => setActiveTab(highestImpactAction.targetTab)}
-              className="w-full sm:w-auto px-5 py-3 rounded-xl bg-blue-500 hover:bg-blue-400 text-white font-bold text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-blue-500/25"
-            >
-              <span>{highestImpactAction.ctaText}</span>
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
+          {/* Action Queue Toggle & Expandable List (Step 43) */}
+          {upcomingActions.length > 0 && (
+            <div className="pt-3 border-t border-white/10 relative z-10">
+              <button
+                onClick={() => setShowActionQueue(!showActionQueue)}
+                className="text-xs font-bold text-blue-300 hover:text-white flex items-center gap-1.5 transition"
+              >
+                <span>Prioritized Next Actions Queue ({upcomingActions.length} upcoming)</span>
+                {showActionQueue ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              </button>
+
+              {showActionQueue && (
+                <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {upcomingActions.map((act) => (
+                    <div 
+                      key={act.id} 
+                      className="p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition space-y-2 flex flex-col justify-between"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="font-bold text-indigo-300 uppercase tracking-wider">{act.category}</span>
+                          <span className="text-amber-300 font-semibold">{act.impactLabel}</span>
+                        </div>
+                        <h4 className="text-xs font-bold text-white leading-snug">{act.title}</h4>
+                        <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">{act.description}</p>
+                      </div>
+
+                      <div className="pt-2 flex items-center justify-between">
+                        <button
+                          onClick={() => setActiveTab(act.targetTab)}
+                          className="text-[11px] font-bold text-blue-400 hover:underline flex items-center gap-1"
+                        >
+                          <span>{act.ctaText}</span>
+                          <ArrowRight className="h-3 w-3" />
+                        </button>
+                        <button
+                          onClick={() => handleCompleteAction(act.id)}
+                          className="p-1 text-slate-400 hover:text-emerald-400 transition"
+                          title="Mark complete"
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
       {/* Metric Cards Grid with Readiness Meter & Urgency Radar (Step 24) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

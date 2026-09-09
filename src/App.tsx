@@ -17,6 +17,7 @@ import { CvBuilder } from './components/aiTools/CvBuilder';
 import { RoadmapView } from './components/roadmap/RoadmapView';
 import { AiCounselorChat } from './components/aiTools/AiCounselorChat';
 import { AdminDashboard } from './components/admin/AdminDashboard';
+import { SchoolCounselorPortal } from './components/b2b/SchoolCounselorPortal';
 import { PricingModal } from './components/pricing/PricingModal';
 import { AiQuotaModal } from './components/common/AiQuotaModal';
 import { AuthLanding } from './components/auth/AuthLanding';
@@ -33,7 +34,7 @@ const MainLayout: React.FC = () => {
     const validTabs = [
       'dashboard', 'profile', 'assessment', 'universities', 
       'scholarships', 'countries', 'applications', 'vault', 
-      'sop', 'cv', 'roadmap', 'counselor', 'admin'
+      'sop', 'cv', 'roadmap', 'counselor', 'admin', 'school'
     ];
     if (path && validTabs.includes(path) && path !== activeTab) {
       setActiveTab(path);
@@ -83,6 +84,8 @@ const MainLayout: React.FC = () => {
         return <AiCounselorChat />;
       case 'admin':
         return <AdminDashboard />;
+      case 'school':
+        return <SchoolCounselorPortal />;
       default:
         return <DashboardOverview />;
     }

@@ -231,6 +231,27 @@ export class ScholarshipEligibilityEngine {
       });
     }
 
+    // 8. Financial Need Assessment
+    if (scholarship.financialNeedRequired) {
+      const need = profile.financial.scholarshipNeed;
+      const hasDemonstratedNeed = need === 'Full (100%)' || need === 'Substantial (50-80%)';
+      if (hasDemonstratedNeed) {
+        score += 10;
+        whyYouQualify.push('Demonstrated high financial need qualifies for hardship / need-based allocation.');
+        criteriaAudit.push({
+          criterion: 'Financial Need Assessment',
+          status: 'met',
+          details: `Declared financial need (${need}) satisfies need-based eligibility standard.`
+        });
+      } else {
+        criteriaAudit.push({
+          criterion: 'Financial Need Assessment',
+          status: 'warning',
+          details: 'Requires documentation proving financial hardship or low family income.'
+        });
+      }
+    }
+
     // Determine final status (Step 13: Eligible / Potentially Eligible / Not Eligible / Needs Verification)
     let eligibilityStatus: ScholarshipEligibilityStatus = 'Potentially Eligible';
     if (hardDisqualification) {

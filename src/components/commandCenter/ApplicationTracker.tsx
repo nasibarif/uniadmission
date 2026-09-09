@@ -28,7 +28,8 @@ export const ApplicationTracker: React.FC = () => {
     addCustomApplication,
     updateApplicationStage, 
     toggleChecklistItem, 
-    deleteApplication
+    deleteApplication,
+    setActiveTab
   } = useApp();
 
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban');
@@ -218,7 +219,33 @@ export const ApplicationTracker: React.FC = () => {
       </div>
 
       {/* Main Workspace */}
-      {viewMode === 'kanban' ? (
+      {applications.length === 0 ? (
+        <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 shadow-xs space-y-4 max-w-lg mx-auto my-8">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center">
+            <KanbanSquare className="h-7 w-7" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-base font-bold text-slate-900">Your Command Center is Ready</h3>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Add degree programs from your matched universities or create a custom entry to establish deadlines, automated checklists, and real-time readiness meters.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <button
+              onClick={() => setActiveTab('universities')}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-xs"
+            >
+              Browse Recommended Universities
+            </button>
+            <button
+              onClick={() => setIsAddModalOpen(true)}
+              className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition"
+            >
+              + Create Custom Application
+            </button>
+          </div>
+        </div>
+      ) : viewMode === 'kanban' ? (
         
         /* KANBAN VIEW */
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3 overflow-x-auto pb-4">

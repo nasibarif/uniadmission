@@ -12,7 +12,9 @@ import {
   Building2,
   AlertTriangle,
   Clock,
-  Compass
+  Compass,
+  TrendingUp,
+  Zap
 } from 'lucide-react';
 
 interface UniversityModalProps {
@@ -158,6 +160,83 @@ export const UniversityModal: React.FC<UniversityModalProps> = ({ university, on
             </div>
           </div>
         </div>
+
+        {/* Step 42: Explain Every Recommendation (6-Dimension Fit Breakdown) */}
+        {university.fitBreakdown && (
+          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/90 space-y-3.5">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                <TrendingUp className="h-4 w-4 text-blue-600" />
+                <span>Multi-Dimensional Profile Alignment (Step 42)</span>
+              </h4>
+              <span className="text-[11px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                {university.matchScore}% Overall Fit
+              </span>
+            </div>
+
+            {/* 6 Fit Dimension Bars */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              {[
+                { label: 'Academic Fit', value: university.fitBreakdown.academicFit },
+                { label: 'Program Fit', value: university.fitBreakdown.programFit },
+                { label: 'Budget Fit', value: university.fitBreakdown.budgetFit },
+                { label: 'Scholarship Fit', value: university.fitBreakdown.scholarshipFit },
+                { label: 'English Fit', value: university.fitBreakdown.englishFit },
+                { label: 'Deadline Fit', value: university.fitBreakdown.deadlineFit }
+              ].map((dim, dIdx) => (
+                <div key={dIdx} className="p-2.5 rounded-xl bg-white border border-slate-200/70 space-y-1">
+                  <div className="flex justify-between items-center text-[10px] font-bold">
+                    <span className="text-slate-500">{dim.label}</span>
+                    <span className="text-slate-800">{dim.value}%</span>
+                  </div>
+                  <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full rounded-full ${
+                        dim.value >= 80 ? 'bg-emerald-500' : dim.value >= 60 ? 'bg-blue-600' : 'bg-amber-500'
+                      }`}
+                      style={{ width: `${dim.value}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Strengths & Improvement Levers Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              {/* Strengths */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                  <span>Key Application Strengths</span>
+                </span>
+                <ul className="space-y-1 text-xs text-slate-700">
+                  {university.fitBreakdown.strengths.map((str, sIdx) => (
+                    <li key={sIdx} className="bg-emerald-50/60 p-2 rounded-lg border border-emerald-100 flex items-start gap-1.5">
+                      <span className="text-emerald-600 font-bold">•</span>
+                      <span>{str}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Score Improvement Levers */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-800 flex items-center gap-1">
+                  <Zap className="h-3.5 w-3.5 text-indigo-600" />
+                  <span>Score Improvement Levers</span>
+                </span>
+                <ul className="space-y-1 text-xs text-slate-700">
+                  {university.fitBreakdown.improvementLevers.map((lev, lIdx) => (
+                    <li key={lIdx} className="bg-indigo-50/60 p-2 rounded-lg border border-indigo-100 flex items-start gap-1.5">
+                      <span className="text-indigo-600 font-bold">•</span>
+                      <span>{lev}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Risk Factors Notice (Step 14 & 16) */}
         {university.riskFactors && university.riskFactors.length > 0 && (

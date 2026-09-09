@@ -216,6 +216,20 @@ export interface University {
   missingPrereqs?: string[];
   riskFactors?: string[];
   admissionDisclaimer?: string;
+  fitBreakdown?: FitBreakdown;
+}
+
+export interface FitBreakdown {
+  academicFit: number;
+  programFit: number;
+  budgetFit: number;
+  scholarshipFit: number;
+  englishFit: number;
+  deadlineFit: number;
+  strengths: string[];
+  riskFactors: string[];
+  missingRequirements: string[];
+  improvementLevers: string[];
 }
 
 export interface ScholarshipCriterionResult {
@@ -478,3 +492,44 @@ export interface UserAccount {
   createdAt: string;
   lastLoginAt: string;
 }
+
+// -------------------------------------------------------------
+// Step 45: School / B2B Organization & Cohort Management
+// -------------------------------------------------------------
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  type: 'High School' | 'College' | 'Consultancy' | 'Enterprise';
+  adminEmail: string;
+  createdAt: string;
+  activeCohortsCount: number;
+  totalStudentsCount: number;
+}
+
+export interface Cohort {
+  id: string;
+  organizationId: string;
+  name: string;
+  academicYear: string;
+  targetIntake: string;
+  studentCount: number;
+  averageReadinessScore: number;
+}
+
+export interface CounselorRosterStudent {
+  id: string;
+  cohortId: string;
+  fullName: string;
+  email: string;
+  avatarUrl?: string;
+  targetDegree: string;
+  targetMajor: string;
+  targetCountries: string[];
+  readinessScore: number;
+  applicationsCount: number;
+  criticalBlockersCount: number;
+  lastActiveAt: string;
+  hasGrantedCounselorAccess: boolean;
+}
+

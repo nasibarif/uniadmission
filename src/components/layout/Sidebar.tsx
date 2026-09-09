@@ -15,7 +15,8 @@ import {
   Bot,
   Sparkles,
   ChevronRight,
-  ShieldCheck
+  ShieldCheck,
+  Building
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -38,6 +39,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
     { id: 'cv', label: 'CV & Activity Builder', icon: FileText, badge: 'AI', minTier: 'Application' },
     { id: 'roadmap', label: 'Personalized Roadmap', icon: CalendarDays, badge: 'Timeline', minTier: 'Complete' },
     { id: 'counselor', label: 'AI Admission Counselor', icon: Bot, badge: '24/7', minTier: 'Free' },
+    { id: 'school', label: 'School Counselor B2B', icon: Building, badge: 'B2B', minTier: 'Free' },
     { id: 'admin', label: 'Admin & Data Quality', icon: ShieldCheck, badge: 'Staff', minTier: 'Free' },
   ];
 

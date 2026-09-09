@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { UniversityModal } from './UniversityModal';
+import { PortfolioStrategyModal } from './PortfolioStrategyModal';
+import { SkeletonCard } from '../common/Skeleton';
 import type { AdmissionCategory } from '../../types';
 import { 
   Search, 
@@ -11,7 +13,8 @@ import {
   Sparkles,
   Clock,
   Compass,
-  AlertCircle
+  AlertCircle,
+  Layers
 } from 'lucide-react';
 
 export const UniversityFinder: React.FC = () => {
@@ -27,6 +30,7 @@ export const UniversityFinder: React.FC = () => {
     setSelectedUniversityForModal
   } = useApp();
 
+  const [isPortfolioModalOpen, setIsPortfolioModalOpen] = useState<boolean>(false);
   const [categoryFilter, setCategoryFilter] = useState<'All' | 'High Reach' | 'Reach' | 'Target' | 'Likely'>('All');
   const [countryFilter, setCountryFilter] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -88,31 +92,41 @@ export const UniversityFinder: React.FC = () => {
             </p>
           </div>
 
-          {/* Qualitative Positioning Stats (Step 14 & 16: Likely / Target / Reach) */}
-          <div className="flex items-center gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200 shrink-0">
+          {/* Strategic Portfolio & Qualitative Positioning Stats */}
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
             <button
-              onClick={() => setCategoryFilter(categoryFilter === 'Reach' ? 'All' : 'Reach')}
-              className={`text-center px-3 py-1.5 rounded-lg transition ${categoryFilter === 'Reach' ? 'bg-purple-100 ring-1 ring-purple-300' : 'hover:bg-slate-200/60'}`}
+              onClick={() => setIsPortfolioModalOpen(true)}
+              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white text-xs font-bold shadow-xs transition flex items-center gap-1.5"
             >
-              <div className="text-base font-bold text-purple-700">{reachCount + highReachCount}</div>
-              <div className="text-[10px] uppercase font-bold text-purple-600">Reach</div>
+              <Layers className="h-3.5 w-3.5" />
+              <span>Strategic Portfolio Builder</span>
             </button>
-            <span className="text-slate-300">•</span>
-            <button
-              onClick={() => setCategoryFilter(categoryFilter === 'Target' ? 'All' : 'Target')}
-              className={`text-center px-3 py-1.5 rounded-lg transition ${categoryFilter === 'Target' ? 'bg-blue-100 ring-1 ring-blue-300' : 'hover:bg-slate-200/60'}`}
-            >
-              <div className="text-base font-bold text-blue-700">{targetCount}</div>
-              <div className="text-[10px] uppercase font-bold text-blue-600">Target</div>
-            </button>
-            <span className="text-slate-300">•</span>
-            <button
-              onClick={() => setCategoryFilter(categoryFilter === 'Likely' ? 'All' : 'Likely')}
-              className={`text-center px-3 py-1.5 rounded-lg transition ${categoryFilter === 'Likely' ? 'bg-emerald-100 ring-1 ring-emerald-300' : 'hover:bg-slate-200/60'}`}
-            >
-              <div className="text-base font-bold text-emerald-700">{likelyCount}</div>
-              <div className="text-[10px] uppercase font-bold text-emerald-600">Likely</div>
-            </button>
+
+            <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200">
+              <button
+                onClick={() => setCategoryFilter(categoryFilter === 'Reach' ? 'All' : 'Reach')}
+                className={`text-center px-2.5 py-1 rounded-lg transition ${categoryFilter === 'Reach' ? 'bg-purple-100 ring-1 ring-purple-300' : 'hover:bg-slate-200/60'}`}
+              >
+                <div className="text-sm font-bold text-purple-700">{reachCount + highReachCount}</div>
+                <div className="text-[9px] uppercase font-bold text-purple-600">Reach</div>
+              </button>
+              <span className="text-slate-300">•</span>
+              <button
+                onClick={() => setCategoryFilter(categoryFilter === 'Target' ? 'All' : 'Target')}
+                className={`text-center px-2.5 py-1 rounded-lg transition ${categoryFilter === 'Target' ? 'bg-blue-100 ring-1 ring-blue-300' : 'hover:bg-slate-200/60'}`}
+              >
+                <div className="text-sm font-bold text-blue-700">{targetCount}</div>
+                <div className="text-[9px] uppercase font-bold text-blue-600">Target</div>
+              </button>
+              <span className="text-slate-300">•</span>
+              <button
+                onClick={() => setCategoryFilter(categoryFilter === 'Likely' ? 'All' : 'Likely')}
+                className={`text-center px-2.5 py-1 rounded-lg transition ${categoryFilter === 'Likely' ? 'bg-emerald-100 ring-1 ring-emerald-300' : 'hover:bg-slate-200/60'}`}
+              >
+                <div className="text-sm font-bold text-emerald-700">{likelyCount}</div>
+                <div className="text-[9px] uppercase font-bold text-emerald-600">Likely</div>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -188,8 +202,33 @@ export const UniversityFinder: React.FC = () => {
 
       {/* University Grid */}
       <div className="space-y-4">
-        {displayedUnis.map((uni) => {
-          const category: AdmissionCategory = (uni.category === 'Safe' ? 'Likely' : uni.category) || 'Target';
+        {universities.length === 0 ? (
+          <div className="space-y-4">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        ) : displayedUnis.length === 0 ? (
+          <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 space-y-4 shadow-xs">
+            <div className="h-12 w-12 mx-auto rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
+              <Compass className="h-6 w-6" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-slate-800">No Universities Match Your Filters</h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                No institutions met your exact combination of country, admission positioning, or search keywords.
+              </p>
+            </div>
+            <button
+              onClick={() => { setCategoryFilter('All'); setCountryFilter('All'); setSearchQuery(''); }}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-xs"
+            >
+              Reset All Filters
+            </button>
+          </div>
+        ) : (
+          displayedUnis.map((uni) => {
+            const category: AdmissionCategory = (uni.category === 'Safe' ? 'Likely' : uni.category) || 'Target';
 
           const badgeColors = 
             category === 'High Reach'
@@ -319,7 +358,7 @@ export const UniversityFinder: React.FC = () => {
               )}
             </div>
           );
-        })}
+        }))}
       </div>
 
       {/* Free Tier Gate Callout (If Free tier is active) */}
@@ -355,6 +394,12 @@ export const UniversityFinder: React.FC = () => {
       <UniversityModal
         university={selectedUniversityForModal}
         onClose={() => setSelectedUniversityForModal(null)}
+      />
+
+      {/* Strategic Multi-Country Portfolio Modal (Step 44) */}
+      <PortfolioStrategyModal
+        isOpen={isPortfolioModalOpen}
+        onClose={() => setIsPortfolioModalOpen(false)}
       />
 
     </div>
