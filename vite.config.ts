@@ -235,7 +235,7 @@ function localSecurityAndGatewayPlugin(): Plugin {
         });
       });
 
-      // Dev Checkout Handler (Stripe excluded; sandbox fallback)
+      // Dev Checkout Handler (bKash sandbox fallback)
       server.middlewares.use('/api/checkout', (req, res) => {
         if (req.method === 'OPTIONS') {
           res.setHeader('Access-Control-Allow-Origin', '*');

@@ -21,7 +21,7 @@ export interface SubscriptionInfo {
 
 export class SubscriptionService {
   /**
-   * Initiate a server-backed checkout session for a given subscription plan
+   * Initiate a server-backed bKash checkout session for a given subscription plan
    */
   public static async createCheckoutSession(
     tier: UserTier,
@@ -47,14 +47,12 @@ export class SubscriptionService {
         }
       }
 
-      const response = await fetch('/api/checkout', {
+      // Call bKash payment creation endpoint
+      const response = await fetch('/api/bkash/create', {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          tier,
-          userId: currentUser.id,
-          email: currentUser.email,
-          returnUrl: typeof window !== 'undefined' ? window.location.origin : '',
+          planId: tier,
         }),
       });
 
@@ -63,15 +61,15 @@ export class SubscriptionService {
       if (response.ok && data.success) {
         return {
           success: true,
-          checkoutUrl: data.checkoutUrl,
-          sessionId: data.sessionId,
-          isSandbox: Boolean(data.isSandbox),
+          checkoutUrl: data.paymentUrl || `/?session_id=${data.paymentId}&checkout_success=true`,
+          sessionId: data.paymentId,
+          isSandbox: !data.paymentUrl,
         };
       }
 
       return {
         success: false,
-        error: data.error || `Checkout failed (status ${response.status})`,
+        error: data.error || `Payment session creation failed (status ${response.status})`,
       };
     } catch (err: any) {
       return {
@@ -82,45 +80,63 @@ export class SubscriptionService {
   }
 
   /**
-   * Fetch verified subscription record from Supabase or server entitlements endpoint
+   * Fetch verified subscription record strictly for authenticated user session
    */
-  public static async fetchUserSubscription(userId: string): Promise<SubscriptionInfo | null> {
+  public static async fetchUserSubscription(providedUserId?: string): Promise<SubscriptionInfo | null> {
+    let authenticatedUserId = providedUserId;
+
+    // Derive user strictly from authenticated Supabase session when available
     if (isSupabaseConfigured() && supabase) {
       try {
-        const { data, error } = await supabase
-          .from('subscriptions')
-          .select('*')
-          .eq('user_id', userId)
-          .eq('status', 'active')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user?.id) {
+          authenticatedUserId = session.user.id;
+        }
 
-        if (error) {
-          console.warn('Could not fetch subscription record:', error.message);
-        } else if (data) {
-          return {
-            tier: (data.plan_id as UserTier) || 'Explorer',
-            status: data.status,
-            currentPeriodEnd: data.current_period_end,
-            amountBdt: Number(data.amount_bdt) || Number(data.amount_usd) || 0,
-            amountUsd: Number(data.amount_usd) || 0,
-            currency: data.currency || 'BDT',
-            paymentProvider: data.payment_provider || 'bkash',
-          };
+        if (authenticatedUserId) {
+          const { data, error } = await supabase
+            .from('subscriptions')
+            .select('*')
+            .eq('user_id', authenticatedUserId)
+            .eq('status', 'active')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (error) {
+            console.warn('Could not fetch subscription record:', error.message);
+          } else if (data) {
+            return {
+              tier: (data.plan_id as UserTier) || 'Explorer',
+              status: data.status,
+              currentPeriodEnd: data.current_period_end,
+              amountBdt: Number(data.amount_bdt) || 0,
+              currency: data.currency || 'BDT',
+              paymentProvider: data.payment_provider || 'bkash',
+            };
+          }
         }
       } catch (err) {
         console.warn('Subscription query error:', err);
       }
     }
 
+    // Call entitlements endpoint with auth header
     try {
-      const response = await fetch(`/api/entitlements?userId=${encodeURIComponent(userId)}`);
+      const headers: Record<string, string> = {};
+      if (isSupabaseConfigured() && supabase) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          headers.Authorization = `Bearer ${session.access_token}`;
+        }
+      }
+
+      const response = await fetch('/api/entitlements', { headers });
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
           return {
-            tier: data.tier || 'Explorer',
+            tier: data.tier || data.plan || 'Explorer',
             status: data.status || 'active',
             amountBdt: data.amountBdt || 0,
             currency: 'BDT',

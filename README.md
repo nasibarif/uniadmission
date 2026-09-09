@@ -83,15 +83,22 @@ npm install
 ```
 
 ### Environment Configuration
-Create a `.env` file in the project root:
+Create a `.env` file in the project root (see `.env.example`):
 ```env
-# Supabase Configuration
+# Supabase Configuration (Frontend)
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
 
-# Server-Side Secrets (Keep strictly server-side)
+# Server-Side AI Gateway (Never expose via VITE_*)
 GEMINI_API_KEY=your-gemini-api-key
-STRIPE_SECRET_KEY=your-stripe-secret-key
+
+# Server-Side bKash MFS Gateway (Strictly Server / Edge Functions Only)
+BKASH_BASE_URL=https://tokenized.sandbox.bka.sh/v2.0
+BKASH_APP_KEY=your-bkash-app-key
+BKASH_APP_SECRET=your-bkash-app-secret
+BKASH_USERNAME=your-bkash-username
+BKASH_PASSWORD=your-bkash-password
+BKASH_CALLBACK_URL=https://app.uniadmission.com/api/bkash/callback
 ```
 
 ### Development Server
