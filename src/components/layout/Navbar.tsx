@@ -1,12 +1,12 @@
 import React, { useState, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { SAMPLE_PROFILES } from '../../data/sampleProfiles';
-import { GeminiService } from '../../services/geminiService';
+import { DossierImportModal } from '../common/DossierImportModal';
+import type { ValidationResult } from '../../schemas/dossierSchema';
 import { 
   GraduationCap, 
   Sparkles, 
   Crown, 
-  Key, 
   Bell, 
   ChevronDown, 
   Menu,
@@ -19,13 +19,13 @@ import {
 } from 'lucide-react';
 
 interface NavbarProps {
-  onOpenApiKeyModal: () => void;
+  onOpenAiQuotaModal?: () => void;
   mobileMenuOpen?: boolean;
   onToggleMobileMenu?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ 
-  onOpenApiKeyModal, 
+  onOpenAiQuotaModal, 
   mobileMenuOpen, 
   onToggleMobileMenu 
 }) => {
@@ -38,7 +38,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     report, 
     applications, 
     exportDossierJson,
-    importDossierJson,
+    validateDossier,
+    applyValidatedDossier,
     setIsUpgradeModalOpen,
     setActiveTab 
   } = useApp();
@@ -46,9 +47,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importValidationResult, setImportValidationResult] = useState<ValidationResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const hasApiKey = Boolean(GeminiService.getApiKey());
   const pendingCount = applications.filter(a => a.stage === 'Documents Missing' || a.progressPercent < 50).length;
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -59,14 +61,9 @@ export const Navbar: React.FC<NavbarProps> = ({
     reader.onload = (event) => {
       const content = event.target?.result as string;
       if (content) {
-        const success = importDossierJson(content);
-        if (success) {
-          setImportStatus('Dossier restored successfully!');
-          setTimeout(() => setImportStatus(null), 3000);
-        } else {
-          setImportStatus('Invalid dossier JSON file.');
-          setTimeout(() => setImportStatus(null), 3000);
-        }
+        const result = validateDossier(content);
+        setImportValidationResult(result);
+        setIsImportModalOpen(true);
       }
     };
     reader.readAsText(file);
@@ -179,19 +176,15 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </div>
 
-            {/* API Key Modal Button with Live Status Badge */}
+            {/* AI Gateway Quota & Status Button */}
             <button
-              onClick={onOpenApiKeyModal}
-              className={`p-2 rounded-lg border transition flex items-center gap-1.5 text-xs font-medium ${
-                hasApiKey 
-                  ? 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100' 
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-              }`}
-              title={hasApiKey ? 'Gemini API Connected (Live LLM)' : 'Using Built-in Admissions Engine (Click to add API key)'}
+              onClick={onOpenAiQuotaModal}
+              className="p-2 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition flex items-center gap-1.5 text-xs font-medium"
+              title="Secured AI Gateway Active (Click to view daily generation quota)"
             >
-              <Key className="h-4 w-4" />
-              <span className="hidden sm:inline text-[11px] font-semibold">
-                {hasApiKey ? 'Gemini Live' : 'AI Key'}
+              <Sparkles className="h-4 w-4 text-blue-600" />
+              <span className="hidden sm:inline text-[11px] font-bold">
+                AI Active
               </span>
             </button>
 
@@ -356,6 +349,23 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         )}
       </div>
+
+      {/* Validated Dossier Restoration & Preview Diff Modal */}
+      <DossierImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => {
+          setIsImportModalOpen(false);
+          setImportValidationResult(null);
+        }}
+        validationResult={importValidationResult}
+        onConfirmImport={(dossier, createBackup) => {
+          applyValidatedDossier(dossier, createBackup);
+          setIsImportModalOpen(false);
+          setImportValidationResult(null);
+          setImportStatus('Dossier restored and verified successfully!');
+          setTimeout(() => setImportStatus(null), 3500);
+        }}
+      />
     </header>
   );
 };

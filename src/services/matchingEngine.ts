@@ -1,198 +1,249 @@
-import type { StudentProfile, University, Scholarship } from '../types';
+import type { StudentProfile, University, Scholarship, AdmissionCategory } from '../types';
+import { ScholarshipEligibilityEngine } from './scholarshipEligibilityEngine';
 
-export function matchUniversities(profile: StudentProfile, universities: University[]): University[] {
+export const SCORING_MODEL_VERSION = '2026.2-constraint-weighted';
+
+export const ADMISSION_DISCLAIMER_NOTICE = 
+  'Profile fit scores and positioning classifications represent statistical alignment with published requirements and historical cohorts. Admissions decisions are holistic, non-deterministic, and solely determined by universities. No admission outcome is guaranteed.';
+
+interface MatchingWeights {
+  academic: number;
+  english: number;
+  standardizedTest: number;
+  budget: number;
+  program: number;
+  country: number;
+}
+
+const DEFAULT_WEIGHTS: MatchingWeights = {
+  academic: 0.25,
+  english: 0.15,
+  standardizedTest: 0.15,
+  budget: 0.20,
+  program: 0.15,
+  country: 0.10
+};
+
+/**
+ * Normalized Constraint-Aware University Matching Engine (Steps 14, 15, 16)
+ * - Evaluates hard constraints (degree level, language cutoffs, budget viability)
+ * - Produces an explainable Profile Fit Score (0-100%)
+ * - Classifies admission positioning as Likely, Target, Reach, or High Reach (no 'Safe' guarantees)
+ * - Identifies concrete risk factors and prerequisite requirements
+ */
+export function matchUniversities(
+  profile: StudentProfile, 
+  universities: University[],
+  weights: MatchingWeights = DEFAULT_WEIGHTS
+): University[] {
   const gpa = profile.academic.gpaScale === '5.0' ? (profile.academic.gpa / 5.0) * 4.0 : profile.academic.gpa;
-  const ielts = profile.standardizedTests.englishTest.overallScore || 6.0;
+  const ielts = profile.standardizedTests.englishTest.overallScore || 6.5;
   const sat = profile.standardizedTests.standardizedTest.totalScore || 0;
+  const studentBudget = profile.financial.maxYearlyBudgetUSD || 25000;
 
   return universities.map(uni => {
-    let matchScore = 70; // baseline
     const req = uni.requirements;
     const whyMatch: string[] = [];
     const missingPrereqs: string[] = [];
+    const riskFactors: string[] = [];
 
-    // 1. Academic comparison
+    // -------------------------------------------------------------
+    // Component 1: Academic Fit (Normalized 0-100)
+    // -------------------------------------------------------------
+    let academicScore = 60;
     if (gpa >= req.minGpa + 0.3) {
-      matchScore += 12;
-      whyMatch.push(`Your GPA (${profile.academic.rawGpaText}) exceeds the minimum cutoff (${req.minGpa}).`);
+      academicScore = 95;
+      whyMatch.push(`GPA (${profile.academic.rawGpaText}) comfortably clears standard entry cutoff (${req.minGpa}).`);
     } else if (gpa >= req.minGpa) {
-      matchScore += 6;
-      whyMatch.push(`Your GPA meets university standard requirement.`);
+      academicScore = 80;
+      whyMatch.push(`GPA meets standard published cutoff (${req.minGpa}).`);
     } else {
-      matchScore -= 15;
-      missingPrereqs.push(`GPA slightly below target threshold (${req.minGpa}).`);
+      const deficit = req.minGpa - gpa;
+      academicScore = Math.max(30, 70 - Math.round(deficit * 60));
+      missingPrereqs.push(`GPA (${profile.academic.rawGpaText}) is below published target of ${req.minGpa}.`);
+      riskFactors.push(`Academic GPA falls below the typical admit median for ${uni.shortName || uni.name}.`);
     }
 
-    // 2. English Proficiency
+    // -------------------------------------------------------------
+    // Component 2: English Language Proficiency (Normalized 0-100)
+    // -------------------------------------------------------------
+    let englishScore = 60;
     if (ielts >= req.minIelts + 0.5) {
-      matchScore += 8;
+      englishScore = 98;
       whyMatch.push(`English score (${ielts}) easily clears language requirement (${req.minIelts}).`);
     } else if (ielts >= req.minIelts) {
-      matchScore += 4;
+      englishScore = 82;
+      whyMatch.push(`English score meets required minimum (${req.minIelts}).`);
     } else {
-      matchScore -= 12;
-      missingPrereqs.push(`Needs IELTS ${req.minIelts} (Current: ${ielts}).`);
+      englishScore = Math.max(20, 50 - (req.minIelts - ielts) * 30);
+      missingPrereqs.push(`Language requirement unmet: requires IELTS ${req.minIelts} (Current: ${ielts}).`);
+      riskFactors.push(`Requires language score retake or conditional English pathway.`);
     }
 
-    // 3. SAT / Standardized Test
-    if (req.minSat) {
+    // -------------------------------------------------------------
+    // Component 3: Standardized Testing (Normalized 0-100)
+    // -------------------------------------------------------------
+    let testScore = 75; // baseline for test-optional
+    if (req.minSat && req.minSat > 0) {
       if (sat >= req.minSat) {
-        matchScore += 10;
-        whyMatch.push(`SAT score (${sat}) is competitive for admission and merit aid.`);
+        testScore = 96;
+        whyMatch.push(`SAT score (${sat}) qualifies for top competitive applicant pool.`);
       } else if (sat > 0) {
-        matchScore -= 6;
-        missingPrereqs.push(`SAT (${sat}) is below typical median (${req.minSat}).`);
+        testScore = Math.max(40, 75 - Math.round((req.minSat - sat) / 5));
+        missingPrereqs.push(`SAT (${sat}) is below competitive benchmark of ${req.minSat}.`);
       } else if (!req.satOptional) {
-        matchScore -= 18;
-        missingPrereqs.push(`Requires SAT / ACT score submission.`);
+        testScore = 25;
+        missingPrereqs.push(`Mandatory standardized testing required (min SAT ${req.minSat}).`);
+        riskFactors.push(`Standardized test score required for consideration.`);
       }
     }
 
-    // 4. Country preference
-    if (profile.preferences.countries.some(c => c.toLowerCase() === uni.country.toLowerCase())) {
-      matchScore += 6;
-      whyMatch.push(`${uni.country} is in your top prioritized study destinations.`);
+    // -------------------------------------------------------------
+    // Component 4: Budget & Cost Feasibility (Normalized 0-100)
+    // -------------------------------------------------------------
+    const grossCost = uni.averageAnnualTuitionUSD + uni.averageLivingUSD;
+    let budgetScore = 70;
+    if (grossCost <= studentBudget) {
+      budgetScore = 95;
+      whyMatch.push(`Annual cost ($${grossCost.toLocaleString()}) fits within your declared budget ($${studentBudget.toLocaleString()}).`);
+    } else if (grossCost <= studentBudget * 1.3) {
+      budgetScore = 75;
+      riskFactors.push(`Annual cost ($${grossCost.toLocaleString()}) moderately exceeds budget without scholarship aid.`);
+    } else {
+      budgetScore = Math.max(25, 60 - Math.round(((grossCost - studentBudget) / 10000) * 10));
+      riskFactors.push(`Significant budget gap ($${(grossCost - studentBudget).toLocaleString()}/yr) requires external or institutional scholarship.`);
     }
 
-    // 5. Major fit
-    const matchedProgram = uni.programs.find(p => 
-      p.degree.toLowerCase().includes(profile.intendedStudy.degreeLevel.toLowerCase().slice(0, 4)) &&
-      (p.name.toLowerCase().includes(profile.intendedStudy.major.toLowerCase()) || 
-       p.department.toLowerCase().includes(profile.intendedStudy.major.toLowerCase()) ||
-       profile.intendedStudy.secondaryMajors.some(sec => p.name.toLowerCase().includes(sec.toLowerCase())))
-    );
+    // -------------------------------------------------------------
+    // Component 5: Program Availability & Alignment (Normalized 0-100)
+    // -------------------------------------------------------------
+    let programScore = 50;
+    const targetDegree = profile.intendedStudy.degreeLevel.toLowerCase();
+    const targetMajor = profile.intendedStudy.major.toLowerCase();
+
+    const matchedProgram = uni.programs.find(p => {
+      const degMatch = p.degree.toLowerCase().includes(targetDegree.slice(0, 4)) || targetDegree.includes(p.degree.toLowerCase().slice(0, 4));
+      const majMatch = p.name.toLowerCase().includes(targetMajor) || 
+                       p.department.toLowerCase().includes(targetMajor) ||
+                       profile.intendedStudy.secondaryMajors.some(s => p.name.toLowerCase().includes(s.toLowerCase()));
+      return degMatch && majMatch;
+    });
 
     if (matchedProgram) {
-      matchScore += 8;
-      whyMatch.push(`Offers direct accredited degree in ${matchedProgram.name}.`);
+      programScore = 95;
+      whyMatch.push(`Offers accredited degree program: ${matchedProgram.name} (${matchedProgram.applicationRoute || 'Direct'}).`);
+    } else {
+      programScore = 60;
     }
 
-    // 6. Classification: Reach / Target / Safe
-    let category: 'Reach' | 'Target' | 'Safe' = 'Target';
+    // -------------------------------------------------------------
+    // Component 6: Country Preference Alignment (Normalized 0-100)
+    // -------------------------------------------------------------
+    let countryScore = 60;
+    const isPreferredCountry = profile.preferences.countries.some(c => 
+      c.toLowerCase() === uni.country.toLowerCase() || 
+      c.toLowerCase() === uni.countryCode.toLowerCase()
+    );
+    if (isPreferredCountry) {
+      countryScore = 95;
+      whyMatch.push(`${uni.country} is prioritized in your preferred study destinations.`);
+    }
+
+    // -------------------------------------------------------------
+    // Calculate Weighted Profile Fit Score (Step 14 & 15)
+    // -------------------------------------------------------------
+    const rawWeightedScore = (
+      academicScore * weights.academic +
+      englishScore * weights.english +
+      testScore * weights.standardizedTest +
+      budgetScore * weights.budget +
+      programScore * weights.program +
+      countryScore * weights.country
+    );
+
+    const fitScore = Math.min(97, Math.max(45, Math.round(rawWeightedScore)));
+
+    // -------------------------------------------------------------
+    // Qualitative Admission Positioning (Step 14 & 16: No 'Safe' guarantees)
+    // -------------------------------------------------------------
+    let category: AdmissionCategory = 'Target';
     let admissionProbability: 'High' | 'Moderate' | 'Reach' = 'Moderate';
     let scholarshipProbability: 'High' | 'Moderate' | 'Low' = 'Moderate';
 
-    // Reach logic: very low acceptance rate (< 20%) or requirements exceed student profile
-    if (uni.acceptanceRate <= 0.20 || uni.rankingWorld <= 30 || (req.minSat && req.minSat >= 1500 && sat < 1480)) {
+    // High Reach: Hyper-selective institutions (e.g. MIT, Harvard, Stanford, Oxford, Cambridge)
+    if (uni.acceptanceRate <= 0.08 || uni.rankingWorld <= 15) {
+      category = 'High Reach';
+      admissionProbability = 'Reach';
+      scholarshipProbability = gpa >= 3.85 ? 'Moderate' : 'Low';
+      riskFactors.push(`Ultra-selective institution (${(uni.acceptanceRate * 100).toFixed(1)}% acceptance); holistic review yields variable outcomes even for high scorers.`);
+    }
+    // Reach: Selective (< 20% admit rate or world rank <= 50 or requirements exceed profile)
+    else if (uni.acceptanceRate <= 0.22 || uni.rankingWorld <= 55 || gpa < req.minGpa) {
       category = 'Reach';
       admissionProbability = 'Reach';
-      scholarshipProbability = gpa >= 3.8 ? 'Moderate' : 'Low';
-    } 
-    // Safe logic: high acceptance rate (> 60%), student comfortably surpasses GPA and test criteria
-    else if ((uni.acceptanceRate >= 0.55 || uni.rankingWorld > 120) && gpa >= req.minGpa + 0.25) {
-      category = 'Safe';
+      scholarshipProbability = gpa >= 3.75 ? 'Moderate' : 'Low';
+      if (uni.acceptanceRate <= 0.22) {
+        riskFactors.push(`Selective admissions rate of ${(uni.acceptanceRate * 100).toFixed(1)}% with competitive international quotas.`);
+      }
+    }
+    // Likely: High acceptance rate (>= 48%), student comfortably surpasses GPA (+0.25) & English
+    else if ((uni.acceptanceRate >= 0.48 || uni.rankingWorld > 130) && gpa >= req.minGpa + 0.2 && ielts >= req.minIelts) {
+      category = 'Likely';
       admissionProbability = 'High';
       scholarshipProbability = gpa >= 3.6 ? 'High' : 'Moderate';
-    } 
-    // Target
+      riskFactors.push(`Admission is likely based on academic credentials, but requires full verification of financial proof and prerequisites.`);
+    }
+    // Target: Standard fit
     else {
       category = 'Target';
       admissionProbability = gpa >= req.minGpa ? 'Moderate' : 'Reach';
-      scholarshipProbability = gpa >= 3.7 ? 'High' : 'Moderate';
+      scholarshipProbability = gpa >= 3.65 ? 'High' : 'Moderate';
     }
 
     // Financial calculations
     let estimatedScholarshipUSD = 0;
     if (uni.countryCode === 'DE') {
-      // Germany: virtually zero tuition
-      estimatedScholarshipUSD = 0;
+      estimatedScholarshipUSD = 0; // Germany tuition already near-zero
     } else if (uni.id === 'kaist') {
-      // KAIST: 100% tuition waiver
       estimatedScholarshipUSD = 25000;
     } else if (scholarshipProbability === 'High') {
-      estimatedScholarshipUSD = Math.round(uni.averageAnnualTuitionUSD * 0.45);
+      estimatedScholarshipUSD = Math.round(uni.averageAnnualTuitionUSD * 0.40);
     } else if (scholarshipProbability === 'Moderate') {
-      estimatedScholarshipUSD = Math.round(uni.averageAnnualTuitionUSD * 0.20);
+      estimatedScholarshipUSD = Math.round(uni.averageAnnualTuitionUSD * 0.18);
     }
 
     const totalGrossCost = uni.averageAnnualTuitionUSD + uni.averageLivingUSD;
     const estimatedNetCostUSD = Math.max(uni.averageLivingUSD, totalGrossCost - estimatedScholarshipUSD);
 
-    // Final match clamp
-    matchScore = Math.min(96, Math.max(52, matchScore));
-
     return {
       ...uni,
-      matchScore,
+      matchScore: fitScore,
       category,
       admissionProbability,
       scholarshipProbability,
       estimatedNetCostUSD,
       whyMatch: whyMatch.slice(0, 3),
-      missingPrereqs: missingPrereqs.slice(0, 2)
+      missingPrereqs: missingPrereqs.slice(0, 3),
+      riskFactors: riskFactors.slice(0, 3),
+      admissionDisclaimer: ADMISSION_DISCLAIMER_NOTICE
     };
   }).sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
 }
 
+/**
+ * Rebuilt Scholarship Matching using Explainable Criteria Evaluation (Step 13)
+ */
 export function matchScholarships(profile: StudentProfile, scholarships: Scholarship[]): Scholarship[] {
-  const gpa = profile.academic.gpaScale === '5.0' ? (profile.academic.gpa / 5.0) * 4.0 : profile.academic.gpa;
-  const ielts = profile.standardizedTests.englishTest.overallScore || 6.0;
-  const sat = profile.standardizedTests.standardizedTest.totalScore || 0;
-
   return scholarships.map(sch => {
-    let score = 65;
-    const whyYouQualify: string[] = [];
-    const missingRequirements: string[] = [];
-
-    // Check GPA
-    if (sch.academicCriteria.minGpa) {
-      if (gpa >= sch.academicCriteria.minGpa) {
-        score += 15;
-        whyYouQualify.push(`GPA (${profile.academic.rawGpaText}) satisfies the merit threshold (${sch.academicCriteria.minGpa}).`);
-      } else {
-        score -= 20;
-        missingRequirements.push(`Minimum GPA requirement of ${sch.academicCriteria.minGpa} needed.`);
-      }
-    }
-
-    // Check IELTS
-    if (sch.academicCriteria.minIelts) {
-      if (ielts >= sch.academicCriteria.minIelts) {
-        score += 10;
-        whyYouQualify.push(`English score (${ielts}) meets scholarship guidelines.`);
-      } else {
-        score -= 15;
-        missingRequirements.push(`Requires minimum IELTS band ${sch.academicCriteria.minIelts}.`);
-      }
-    }
-
-    // Check SAT if applicable
-    if (sch.academicCriteria.minSat) {
-      if (sat >= sch.academicCriteria.minSat) {
-        score += 12;
-        whyYouQualify.push(`SAT score (${sat}) qualifies for top award bracket.`);
-      } else if (sat === 0) {
-        score -= 10;
-        missingRequirements.push(`Requires SAT submission (min ${sch.academicCriteria.minSat}).`);
-      }
-    }
-
-    // Degree level check
-    if (sch.eligibleDegrees.includes(profile.intendedStudy.degreeLevel)) {
-      score += 8;
-      whyYouQualify.push(`Directly open to incoming ${profile.intendedStudy.degreeLevel} applicants.`);
-    }
-
-    // Extracurricular / Leadership boost
-    const leadershipCount = profile.extracurriculars.filter(e => e.category === 'Leadership' || e.category === 'Competitions').length;
-    if (leadershipCount >= 2) {
-      score += 10;
-      whyYouQualify.push('Strong extracurricular leadership profile strengthens competitive review.');
-    }
-
-    // Determine status
-    let eligibilityStatus: Scholarship['eligibilityStatus'] = 'Competitive';
-    if (score >= 82) eligibilityStatus = 'Likely Eligible';
-    else if (score >= 68) eligibilityStatus = 'Competitive';
-    else if (score >= 50) eligibilityStatus = 'Reach / Needs Improvement';
-    else eligibilityStatus = 'Not Eligible';
+    const evaluation = ScholarshipEligibilityEngine.evaluate(profile, sch);
 
     return {
       ...sch,
-      matchScore: Math.min(98, Math.max(40, score)),
-      eligibilityStatus,
-      whyYouQualify: whyYouQualify.slice(0, 3),
-      missingRequirements: missingRequirements.slice(0, 2)
+      matchScore: evaluation.matchScore,
+      eligibilityStatus: evaluation.eligibilityStatus,
+      whyYouQualify: evaluation.whyYouQualify,
+      missingRequirements: evaluation.missingRequirements,
+      criteriaAudit: evaluation.criteriaAudit
     };
   }).sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0));
 }

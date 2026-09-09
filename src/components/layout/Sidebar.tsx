@@ -14,7 +14,8 @@ import {
   CalendarDays,
   Bot,
   Sparkles,
-  ChevronRight
+  ChevronRight,
+  ShieldCheck
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -37,6 +38,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
     { id: 'cv', label: 'CV & Activity Builder', icon: FileText, badge: 'AI', minTier: 'Application' },
     { id: 'roadmap', label: 'Personalized Roadmap', icon: CalendarDays, badge: 'Timeline', minTier: 'Complete' },
     { id: 'counselor', label: 'AI Admission Counselor', icon: Bot, badge: '24/7', minTier: 'Free' },
+    { id: 'admin', label: 'Admin & Data Quality', icon: ShieldCheck, badge: 'Staff', minTier: 'Free' },
   ];
 
   const checkTierLocked = (minTier: string) => {
@@ -57,7 +59,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
   };
 
   return (
-    <aside className="w-64 bg-white text-slate-700 flex flex-col shrink-0 min-h-[calc(100vh-4rem)] border-r border-slate-200 select-none">
+    <aside 
+      role="navigation" 
+      aria-label="Admissions sidebar navigation" 
+      className="w-64 bg-white text-slate-700 flex flex-col shrink-0 min-h-[calc(100vh-4rem)] border-r border-slate-200 select-none hidden md:flex"
+    >
       {/* Navigation Header */}
       <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
         <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
@@ -79,7 +85,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
             <button
               key={item.id}
               onClick={() => handleNavClick(item.id, isLocked)}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all group ${
+              aria-label={item.label}
+              aria-current={isActive ? 'page' : undefined}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all group focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
                 isActive
                   ? 'bg-blue-600 text-white shadow-sm shadow-blue-500/20'
                   : isLocked

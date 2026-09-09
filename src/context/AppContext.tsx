@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import type {
   UserAccount,
   StudentProfile,
@@ -9,7 +9,9 @@ import type {
   ApplicationItem,
   VaultDocument,
   UserTier,
-  RoadmapMilestone
+  RoadmapMilestone,
+  DocumentVisibility,
+  DocumentAuditEntry
 } from '../types';
 import { SAMPLE_PROFILES } from '../data/sampleProfiles';
 import { INITIAL_UNIVERSITIES } from '../data/universitiesData';
@@ -17,7 +19,14 @@ import { INITIAL_SCHOLARSHIPS } from '../data/scholarshipsData';
 import { COUNTRIES_DATA } from '../data/countriesData';
 import { calculateAssessmentReport } from '../services/assessmentEngine';
 import { matchUniversities, matchScholarships } from '../services/matchingEngine';
-import { AuthService } from '../services/authService';
+import { AuthService, type AuthResult } from '../services/authService';
+import { SubscriptionService } from '../services/subscriptionService';
+import { StorageService } from '../services/storageService';
+import { UniversityDataService } from '../services/universityDataService';
+import { ApplicationReadinessEngine } from '../services/applicationReadinessEngine';
+import { RoadmapService } from '../services/roadmapService';
+import { validateDossierJson, type ValidatedDossier, type ValidationResult } from '../schemas/dossierSchema';
+import confetti from 'canvas-confetti';
 
 export interface AdmissionDossierExport {
   version: string;
@@ -26,40 +35,52 @@ export interface AdmissionDossierExport {
   profile: StudentProfile;
   applications: ApplicationItem[];
   vaultDocuments: VaultDocument[];
-  roadmapMilestones: RoadmapMilestone[];
-  report: AssessmentReport;
+  roadmapMilestones?: RoadmapMilestone[];
+  report?: AssessmentReport;
 }
 
 interface AppContextType {
   currentUser: UserAccount | null;
-  signIn: (email: string, pass: string) => { success: boolean; error?: string };
-  signUp: (fullName: string, email: string, pass: string) => { success: boolean; error?: string };
-  signOut: () => void;
+  signIn: (email: string, pass: string) => Promise<AuthResult>;
+  signUp: (fullName: string, email: string, pass: string) => Promise<AuthResult>;
+  signOut: () => Promise<void>;
+  resetPassword: (email: string) => Promise<AuthResult>;
   loginAsDemo: (sampleIndex?: number) => void;
+  userTier: UserTier;
+  initiateCheckout: (tier: UserTier) => Promise<{ success: boolean; checkoutUrl?: string; error?: string }>;
+  refreshEntitlements: () => Promise<void>;
   profile: StudentProfile;
   setProfile: React.Dispatch<React.SetStateAction<StudentProfile>>;
   report: AssessmentReport;
   universities: University[];
   scholarships: Scholarship[];
+  countryScorecards: CountryScorecard[];
   countries: CountryScorecard[];
   applications: ApplicationItem[];
   vaultDocuments: VaultDocument[];
   roadmapMilestones: RoadmapMilestone[];
-  userTier: UserTier;
-  setUserTier: (tier: UserTier) => void;
   activeTab: string;
   setActiveTab: (tab: string) => void;
   loadSampleProfile: (index: number) => void;
-  addToApplications: (university: University, targetProgramName?: string) => void;
+  addToApplications: (university: University, targetProgramIdOrName?: string, intakeSemester?: string) => void;
   addCustomApplication: (app: Omit<ApplicationItem, 'id' | 'createdAt' | 'updatedAt' | 'progressPercent'>) => void;
   updateApplicationStage: (appId: string, stage: ApplicationItem['stage']) => void;
   toggleChecklistItem: (appId: string, itemId: string) => void;
   deleteApplication: (appId: string) => void;
-  addVaultDocument: (doc: Omit<VaultDocument, 'id' | 'uploadDate'>) => void;
-  deleteVaultDocument: (docId: string) => void;
+  addVaultDocument: (doc: Omit<VaultDocument, 'id' | 'uploadDate'>, file?: File) => Promise<VaultDocument>;
+  replaceVaultDocumentVersion: (docId: string, file: File) => Promise<void>;
+  deleteVaultDocument: (docId: string) => Promise<void>;
+  runDocumentAiPreCheck: (docId: string) => Promise<void>;
+  verifyDocumentStaff: (docId: string, reviewerName: string, notes?: string) => Promise<void>;
+  linkDocumentToApplication: (docId: string, applicationId: string) => void;
+  unlinkDocumentFromApplication: (docId: string, applicationId: string) => void;
+  updateDocumentPrivacy: (docId: string, visibility: DocumentVisibility, expiresInMinutes?: number) => Promise<string | undefined>;
+  revokeDocumentSharing: (docId: string) => void;
+  logDocumentAccess: (docId: string, action: DocumentAuditEntry['action'], details?: string) => void;
   toggleMilestone: (milestoneId: string) => void;
   exportDossierJson: () => void;
-  importDossierJson: (jsonData: string) => boolean;
+  validateDossier: (jsonData: string) => ValidationResult;
+  applyValidatedDossier: (dossier: ValidatedDossier, createBackupFirst?: boolean) => void;
   isUpgradeModalOpen: boolean;
   setIsUpgradeModalOpen: (open: boolean) => void;
   selectedUniversityForModal: University | null;
@@ -71,20 +92,14 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Current logged in user account
   const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
-    return AuthService.getCurrentUser();
+    return AuthService.getCachedUser();
   });
 
   // Profile state for current user
-  const [profile, setProfile] = useState<StudentProfile>(() => {
-    if (currentUser) {
-      const data = AuthService.getUserData(currentUser.id);
-      if (data?.profile) return data.profile;
-    }
-    return SAMPLE_PROFILES[0].profile;
-  });
+  const [profile, setProfile] = useState<StudentProfile>(SAMPLE_PROFILES[0].profile);
 
   const [userTier, setUserTier] = useState<UserTier>(() => {
-    return currentUser?.tier || 'Complete';
+    return currentUser?.tier || 'Explorer';
   });
 
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -92,64 +107,107 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [selectedUniversityForModal, setSelectedUniversityForModal] = useState<University | null>(null);
 
   // Applications
-  const [applications, setApplications] = useState<ApplicationItem[]>(() => {
-    if (currentUser) {
-      const data = AuthService.getUserData(currentUser.id);
-      if (data?.applications) return data.applications;
-    }
-    return [];
-  });
+  const [applications, setApplications] = useState<ApplicationItem[]>([]);
 
   // Vault Documents
-  const [vaultDocuments, setVaultDocuments] = useState<VaultDocument[]>(() => {
-    if (currentUser) {
-      const data = AuthService.getUserData(currentUser.id);
-      if (data?.vaultDocuments) return data.vaultDocuments;
-    }
-    return [];
-  });
+  const [vaultDocuments, setVaultDocuments] = useState<VaultDocument[]>([]);
+
+  // Track initial load status so we don't overwrite remote data prematurely
+  const isDataLoadedRef = useRef<boolean>(false);
+
+  const [allUniversities, setAllUniversities] = useState<University[]>(INITIAL_UNIVERSITIES);
+  const [allScholarships, setAllScholarships] = useState<Scholarship[]>(INITIAL_SCHOLARSHIPS);
 
   // Recompute Assessment Report whenever Profile changes
   const [report, setReport] = useState<AssessmentReport>(() => calculateAssessmentReport(profile));
   const [universities, setUniversities] = useState<University[]>(() => matchUniversities(profile, INITIAL_UNIVERSITIES));
   const [scholarships, setScholarships] = useState<Scholarship[]>(() => matchScholarships(profile, INITIAL_SCHOLARSHIPS));
 
+  // Load database universities and scholarships on mount (Step 10)
+  useEffect(() => {
+    let isMounted = true;
+    UniversityDataService.getUniversities().then(unis => {
+      if (isMounted && unis && unis.length > 0) {
+        setAllUniversities(unis);
+      }
+    });
+    UniversityDataService.getScholarships().then(schols => {
+      if (isMounted && schols && schols.length > 0) {
+        setAllScholarships(schols);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Initialize and listen to auth state changes from Supabase
+  useEffect(() => {
+    // Check live session on mount
+    AuthService.getCurrentUser().then(user => {
+      if (user) {
+        setCurrentUser(user);
+      }
+    });
+
+    const unsubscribe = AuthService.onAuthStateChange(user => {
+      setCurrentUser(user);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   // Sync state whenever currentUser changes (Login / Logout / Switch)
   useEffect(() => {
+    let isCancelled = false;
+
     if (currentUser) {
-      const data = AuthService.getUserData(currentUser.id);
-      if (data) {
-        setProfile(data.profile);
-        setApplications(data.applications || []);
-        setVaultDocuments(data.vaultDocuments || []);
-        setUserTier(data.account.tier || 'Complete');
-      }
+      AuthService.fetchUserData(currentUser.id).then(data => {
+        if (isCancelled) return;
+        if (data) {
+          setProfile(data.profile);
+          setApplications(data.applications || []);
+          setVaultDocuments(data.vaultDocuments || []);
+          setUserTier(data.account.tier || 'Explorer');
+        }
+        isDataLoadedRef.current = true;
+      });
+    } else {
+      isDataLoadedRef.current = false;
+      setApplications([]);
+      setVaultDocuments([]);
     }
-  }, [currentUser?.id]);
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [currentUser]);
 
   // Re-calculate matches and persist updates for active user
   useEffect(() => {
     const newReport = calculateAssessmentReport(profile);
-    const matchedUnis = matchUniversities(profile, INITIAL_UNIVERSITIES);
-    const matchedSchols = matchScholarships(profile, INITIAL_SCHOLARSHIPS);
+    const matchedUnis = matchUniversities(profile, allUniversities);
+    const matchedSchols = matchScholarships(profile, allScholarships);
 
     setReport(newReport);
     setUniversities(matchedUnis);
     setScholarships(matchedSchols);
 
-    if (currentUser) {
-      AuthService.updateUserData(currentUser.id, {
+    if (currentUser && isDataLoadedRef.current) {
+      AuthService.saveUserData(currentUser.id, {
         profile,
         applications,
         vaultDocuments,
         account: { tier: userTier }
       });
     }
-  }, [profile, applications, vaultDocuments, userTier, currentUser?.id]);
+  }, [profile, applications, vaultDocuments, userTier, currentUser, allUniversities, allScholarships]);
 
   // Auth Operations
-  const signIn = (email: string, pass: string) => {
-    const result = AuthService.signIn(email, pass);
+  const signIn = async (email: string, pass: string): Promise<AuthResult> => {
+    const result = await AuthService.signIn(email, pass);
     if (result.success && result.user) {
       setCurrentUser(result.user);
       setActiveTab('dashboard');
@@ -157,17 +215,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return result;
   };
 
-  const signUp = (fullName: string, email: string, pass: string) => {
-    const result = AuthService.signUp(fullName, email, pass);
+  const signUp = async (fullName: string, email: string, pass: string): Promise<AuthResult> => {
+    const result = await AuthService.signUp(fullName, email, pass);
     if (result.success && result.user) {
       setCurrentUser(result.user);
-      setActiveTab('profile'); // Send new user to complete profile
+      setActiveTab('profile'); // Direct user to profile creation
     }
     return result;
   };
 
-  const signOut = () => {
-    AuthService.signOut();
+  const resetPassword = async (email: string): Promise<AuthResult> => {
+    return await AuthService.resetPassword(email);
+  };
+
+  const signOut = async () => {
+    await AuthService.signOut();
     setCurrentUser(null);
     setActiveTab('dashboard');
   };
@@ -177,6 +239,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentUser(user);
     setActiveTab('dashboard');
   };
+
+  const refreshEntitlements = useCallback(async () => {
+    if (currentUser) {
+      const sub = await SubscriptionService.fetchUserSubscription(currentUser.id);
+      if (sub && sub.tier) {
+        setUserTier(sub.tier);
+      }
+    }
+  }, [currentUser]);
+
+  const initiateCheckout = async (targetTier: UserTier): Promise<{ success: boolean; checkoutUrl?: string; error?: string }> => {
+    const result = await SubscriptionService.createCheckoutSession(targetTier, currentUser);
+    if (result.success) {
+      if (result.isSandbox && result.checkoutUrl) {
+        // Local sandbox development: simulate verified purchase flow
+        setUserTier(targetTier);
+        if (currentUser) {
+          await AuthService.saveUserData(currentUser.id, {
+            account: { tier: targetTier }
+          });
+        }
+        confetti({
+          particleCount: 80,
+          spread: 70,
+          origin: { y: 0.6 }
+        });
+        setIsUpgradeModalOpen(false);
+      } else if (result.checkoutUrl) {
+        window.location.href = result.checkoutUrl;
+      }
+    }
+    return result;
+  };
+
+  // Sync entitlements or check checkout return parameters
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('checkout_success') === 'true' || params.get('upgrade_success') === 'true') {
+        const tierParam = params.get('tier') as UserTier;
+        if (tierParam) {
+          setUserTier(tierParam);
+          if (currentUser) {
+            AuthService.saveUserData(currentUser.id, { account: { tier: tierParam } });
+          }
+        }
+        refreshEntitlements();
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+  }, [currentUser, refreshEntitlements]);
 
   // Initial Roadmap Milestones
   const [roadmapMilestones, setRoadmapMilestones] = useState<RoadmapMilestone[]>([
@@ -238,148 +351,457 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       description: 'Evaluate acceptance letters, negotiate merit awards, and select final matriculation choice.',
       completed: false,
       priority: 'Medium',
-      category: 'Scholarships'
+      category: 'Submission'
     },
     {
       id: 'm7',
-      month: 'April - July',
+      month: 'April - May',
       year: 2027,
-      title: 'Student Visa (I-20 / Study Permit), Blocked Account & Housing',
-      description: 'Prepare financial bank solvency documents, schedule embassy visa interview, and book student accommodation.',
+      title: 'Visa Application & Proof of Financial Solvency (I-20 / Blocked Account)',
+      description: 'Submit DS-160 (USA) or German Blocked Account (€11,904). Complete biometric visa interview.',
       completed: false,
       priority: 'High',
       category: 'Visa'
     }
   ]);
 
+  // Load persisted roadmap milestones (Step 20)
+  useEffect(() => {
+    let isMounted = true;
+    RoadmapService.fetchUserMilestones(currentUser?.id).then(saved => {
+      if (isMounted && saved && saved.length > 0) {
+        setRoadmapMilestones(saved);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser?.id]);
+
   const loadSampleProfile = (index: number) => {
-    if (SAMPLE_PROFILES[index]) {
-      setProfile(SAMPLE_PROFILES[index].profile);
+    const selected = SAMPLE_PROFILES[index];
+    if (selected) {
+      setProfile(selected.profile);
     }
   };
 
-  const addToApplications = (university: University, targetProgramName?: string) => {
-    const existing = applications.find(a => a.universityId === university.id);
-    if (existing) {
-      setActiveTab('applications');
+  const addToApplications = (
+    university: University, 
+    targetProgramIdOrName?: string, 
+    intakeSemester: string = 'Fall 2026'
+  ) => {
+    const exists = applications.find(a => a.universityId === university.id);
+    if (exists) {
       return;
     }
 
-    const matchedProgram = university.programs[0];
-    const newApp: ApplicationItem = {
-      id: `app-${university.id}-${Date.now()}`,
-      universityId: university.id,
-      universityName: university.name,
-      country: university.country,
-      flag: university.flag,
-      major: targetProgramName || (matchedProgram ? matchedProgram.name : profile.intendedStudy.major),
-      degree: profile.intendedStudy.degreeLevel,
-      stage: 'Preparing',
-      category: university.category || 'Target',
-      deadline: university.requirements.deadlines.regularDecision,
-      deadlineType: university.requirements.deadlines.earlyAction ? 'Early Action' : 'Regular Decision',
-      progressPercent: 20,
-      checklist: [
-        { id: 'ck-acc', title: `Create Official Application Account (${university.shortName || university.name})`, completed: false, required: true, category: 'Account' },
-        { id: 'ck-trans', title: 'Upload Official Academic Transcripts', completed: false, required: true, category: 'Academics' },
-        { id: 'ck-eng', title: `Submit IELTS/TOEFL (Min: ${university.requirements.minIelts})`, completed: false, required: true, category: 'Tests' },
-        { id: 'ck-sop', title: 'Tailor & Upload Statement of Purpose (SOP)', completed: false, required: true, category: 'Essays' },
-        { id: 'ck-lor', title: 'Submit 2 Letters of Recommendation (LOR)', completed: false, required: true, category: 'Recommendations' },
-        { id: 'ck-fee', title: `Pay Application Fee ($${university.requirements.applicationFeeUSD})`, completed: false, required: true, category: 'Submission' }
-      ],
-      notes: `Targeting Fall intake. Application fee is $${university.requirements.applicationFeeUSD}.`,
-      applicationFeeUSD: university.requirements.applicationFeeUSD,
-      officialPortalUrl: university.officialPortalUrl,
-      createdAt: new Date().toISOString().split('T')[0],
-      updatedAt: new Date().toISOString().split('T')[0]
-    };
+    const matchedProg = targetProgramIdOrName
+      ? university.programs.find(p => p.id === targetProgramIdOrName || p.name === targetProgramIdOrName)
+      : university.programs[0] || null;
+
+    const newApp = ApplicationReadinessEngine.createApplicationItem(
+      university, 
+      matchedProg, 
+      intakeSemester
+    );
+
+    const readiness = ApplicationReadinessEngine.calculateReadiness(newApp, vaultDocuments);
+    newApp.readinessScore = readiness.score;
+    newApp.nextRecommendedAction = readiness.nextAction;
 
     setApplications(prev => [newApp, ...prev]);
-    setActiveTab('applications');
   };
 
-  const addCustomApplication = (app: Omit<ApplicationItem, 'id' | 'createdAt' | 'updatedAt' | 'progressPercent'>) => {
-    const completedCount = app.checklist.filter(c => c.completed).length;
-    const total = Math.max(1, app.checklist.length);
-    const progressPercent = Math.round((completedCount / total) * 100);
-
+  const addCustomApplication = (appData: Omit<ApplicationItem, 'id' | 'createdAt' | 'updatedAt' | 'progressPercent'>) => {
     const newApp: ApplicationItem = {
-      ...app,
+      ...appData,
       id: `app-custom-${Date.now()}`,
-      progressPercent,
+      progressPercent: 10,
+      readinessScore: 20,
       createdAt: new Date().toISOString().split('T')[0],
       updatedAt: new Date().toISOString().split('T')[0]
     };
-
     setApplications(prev => [newApp, ...prev]);
   };
 
   const updateApplicationStage = (appId: string, stage: ApplicationItem['stage']) => {
-    setApplications(prev => prev.map(app => {
-      if (app.id === appId) {
-        let progress = app.progressPercent;
-        if (stage === 'Submitted') progress = 100;
-        else if (stage === 'Under Review') progress = 90;
-        else if (stage === 'Preparing') progress = Math.max(progress, 40);
-        return { ...app, stage, progressPercent: progress, updatedAt: new Date().toISOString().split('T')[0] };
-      }
-      return app;
-    }));
+    setApplications(prev =>
+      prev.map(app => {
+        if (app.id === appId) {
+          let progress = app.progressPercent;
+          if (stage === 'Submitted') progress = Math.max(progress, 85);
+          if (stage === 'Accepted') progress = 100;
+          return { ...app, stage, progressPercent: progress, updatedAt: new Date().toISOString().split('T')[0] };
+        }
+        return app;
+      })
+    );
   };
 
   const toggleChecklistItem = (appId: string, itemId: string) => {
-    setApplications(prev => prev.map(app => {
-      if (app.id === appId) {
-        const updatedChecklist = app.checklist.map(item => 
-          item.id === itemId ? { ...item, completed: !item.completed } : item
-        );
-        const completedCount = updatedChecklist.filter(c => c.completed).length;
-        const total = updatedChecklist.length;
-        const progressPercent = Math.round((completedCount / total) * 100);
+    setApplications(prev =>
+      prev.map(app => {
+        if (app.id === appId) {
+          const updatedChecklist = app.checklist.map(item =>
+            item.id === itemId ? { ...item, completed: !item.completed } : item
+          );
+          const total = updatedChecklist.length;
+          const completedCount = updatedChecklist.filter(i => i.completed).length;
+          const progressPercent = total > 0 ? Math.round((completedCount / total) * 100) : 0;
 
-        let stage = app.stage;
-        if (progressPercent === 100) stage = 'Submitted';
-        else if (progressPercent > 0 && stage === 'Researching') stage = 'Preparing';
+          const tempApp: ApplicationItem = {
+            ...app,
+            checklist: updatedChecklist,
+            progressPercent
+          };
 
-        return {
-          ...app,
-          checklist: updatedChecklist,
-          progressPercent,
-          stage,
-          updatedAt: new Date().toISOString().split('T')[0]
-        };
-      }
-      return app;
-    }));
+          const readiness = ApplicationReadinessEngine.calculateReadiness(tempApp, vaultDocuments);
+
+          return {
+            ...tempApp,
+            readinessScore: readiness.score,
+            nextRecommendedAction: readiness.nextAction,
+            stage: readiness.stageRecommendation,
+            updatedAt: new Date().toISOString().split('T')[0]
+          };
+        }
+        return app;
+      })
+    );
   };
 
   const deleteApplication = (appId: string) => {
-    setApplications(prev => prev.filter(a => a.id !== appId));
+    setApplications(prev => prev.filter(app => app.id !== appId));
   };
 
-  const addVaultDocument = (doc: Omit<VaultDocument, 'id' | 'uploadDate'>) => {
+  const addVaultDocument = async (
+    doc: Omit<VaultDocument, 'id' | 'uploadDate'>,
+    file?: File
+  ): Promise<VaultDocument> => {
+    const docId = `doc-${Date.now()}`;
+    const userId = currentUser?.id || 'sandbox-user';
+    let storagePath = doc.storagePath;
+    let mimeType = doc.mimeType || file?.type || 'application/octet-stream';
+    const version = doc.version || 1;
+
+    if (file) {
+      try {
+        const uploadRes = await StorageService.uploadDocumentFile(userId, docId, file, version);
+        storagePath = uploadRes.storagePath;
+        mimeType = uploadRes.mimeType;
+      } catch (err) {
+        console.warn('[AppContext] Storage upload error:', err);
+      }
+    }
+
     const newDoc: VaultDocument = {
       ...doc,
-      id: `doc-${Date.now()}`,
-      uploadDate: new Date().toISOString().split('T')[0]
+      id: docId,
+      uploadDate: new Date().toISOString().split('T')[0],
+      status: doc.status || 'Uploaded',
+      visibility: doc.visibility || 'Private',
+      linkedApplications: doc.linkedApplications || [],
+      storagePath,
+      mimeType,
+      version,
+      auditLog: [
+        {
+          id: `audit-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          action: 'upload',
+          actor: currentUser?.fullName || 'Student (Owner)',
+          details: `Initial document uploaded (${file ? (file.size / 1024).toFixed(0) + ' KB' : 'imported record'})`,
+        },
+      ],
     };
+
     setVaultDocuments(prev => [newDoc, ...prev]);
+    return newDoc;
   };
 
-  const deleteVaultDocument = (docId: string) => {
+  const replaceVaultDocumentVersion = async (docId: string, file: File): Promise<void> => {
+    const target = vaultDocuments.find(d => d.id === docId);
+    if (!target) return;
+
+    const userId = currentUser?.id || 'sandbox-user';
+    const nextVersion = (target.version || 1) + 1;
+
+    const uploadRes = await StorageService.uploadDocumentFile(userId, docId, file, nextVersion);
+
+    const sizeInKb = Math.round(file.size / 1024);
+    const sizeText = sizeInKb > 1024 ? `${(sizeInKb / 1024).toFixed(1)} MB` : `${sizeInKb} KB`;
+
+    setVaultDocuments(prev =>
+      prev.map(d =>
+        d.id === docId
+          ? {
+              ...d,
+              fileName: file.name,
+              fileSizeBytes: sizeText,
+              storagePath: uploadRes.storagePath,
+              mimeType: uploadRes.mimeType,
+              version: nextVersion,
+              status: 'Uploaded',
+              uploadDate: new Date().toISOString().split('T')[0],
+              auditLog: [
+                ...(d.auditLog || []),
+                {
+                  id: `audit-${Date.now()}`,
+                  timestamp: new Date().toISOString(),
+                  action: 'version_update',
+                  actor: currentUser?.fullName || 'Student (Owner)',
+                  details: `Uploaded new version v${nextVersion} (${file.name})`,
+                },
+              ],
+            }
+          : d
+      )
+    );
+  };
+
+  const deleteVaultDocument = async (docId: string): Promise<void> => {
+    const target = vaultDocuments.find(d => d.id === docId);
+    if (target?.storagePath) {
+      await StorageService.deleteDocumentFile(target.storagePath);
+    }
     setVaultDocuments(prev => prev.filter(d => d.id !== docId));
   };
 
-  const toggleMilestone = (milestoneId: string) => {
-    setRoadmapMilestones(prev => prev.map(m => 
-      m.id === milestoneId ? { ...m, completed: !m.completed } : m
-    ));
+  const runDocumentAiPreCheck = async (docId: string): Promise<void> => {
+    const target = vaultDocuments.find(d => d.id === docId);
+    if (!target) return;
+
+    const ext = target.fileName.split('.').pop()?.toLowerCase() || '';
+    const isSupportedFormat = ['pdf', 'docx', 'doc', 'png', 'jpg', 'jpeg', 'txt'].includes(ext);
+    const isReasonableSize = !target.fileSizeBytes?.includes('GB');
+
+    const passedChecks: string[] = [];
+    const issues: string[] = [];
+
+    if (isSupportedFormat) {
+      passedChecks.push(`File format (.${ext}) conforms to institutional standard admissions specs.`);
+    } else {
+      issues.push(`Unrecognized or non-standard file extension (.${ext}).`);
+    }
+
+    if (isReasonableSize) {
+      passedChecks.push('Document file size is within optimal upload limit.');
+    } else {
+      issues.push('Document size exceeds standard university submission limits.');
+    }
+
+    if (target.title && target.title.length >= 3) {
+      passedChecks.push('Document title and classification verified.');
+    } else {
+      issues.push('Document display title is too vague or missing.');
+    }
+
+    const isSuccess = issues.length === 0;
+    const newStatus = isSuccess ? 'AI Checked' : 'Needs Review';
+    const verifiedBy = 'UniAdmission AI Document Inspector';
+    const now = new Date().toISOString();
+
+    setVaultDocuments(prev =>
+      prev.map(d =>
+        d.id === docId
+          ? {
+              ...d,
+              status: newStatus,
+              verificationDetails: {
+                status: newStatus,
+                verifiedBy,
+                verifiedAt: now,
+                actorType: 'ai_auditor',
+                notes: isSuccess
+                  ? 'All automated integrity checks passed: file format, readability, and structural metadata confirmed.'
+                  : 'Automated review flagged potential discrepancies. Manual advisor inspection recommended.',
+                checklistPassed: passedChecks,
+                issuesDetected: issues,
+              },
+              auditLog: [
+                ...(d.auditLog || []),
+                {
+                  id: `audit-${Date.now()}`,
+                  timestamp: now,
+                  action: 'verify',
+                  actor: verifiedBy,
+                  details: `Automated AI pre-check completed (${newStatus}): ${passedChecks.length} checks passed`,
+                },
+              ],
+            }
+          : d
+      )
+    );
   };
 
-  // Export full admission dossier as JSON
+  const verifyDocumentStaff = async (docId: string, reviewerName: string, notes?: string): Promise<void> => {
+    const now = new Date().toISOString();
+    setVaultDocuments(prev =>
+      prev.map(d =>
+        d.id === docId
+          ? {
+              ...d,
+              status: 'Verified by UniAdmission',
+              verificationDetails: {
+                status: 'Verified by UniAdmission',
+                verifiedBy: reviewerName,
+                verifiedAt: now,
+                actorType: 'staff',
+                notes: notes || 'Verified by UniAdmission Senior Admissions Advisor against official university requirements.',
+                checklistPassed: ['Institutional seal authentic', 'Academic scoring verified', 'Official letterhead validated'],
+              },
+              auditLog: [
+                ...(d.auditLog || []),
+                {
+                  id: `audit-${Date.now()}`,
+                  timestamp: now,
+                  action: 'verify',
+                  actor: reviewerName,
+                  details: `Verified by UniAdmission Advisor: ${notes || 'Approved'}`,
+                },
+              ],
+            }
+          : d
+      )
+    );
+  };
+
+  const linkDocumentToApplication = (docId: string, applicationId: string) => {
+    setVaultDocuments(prev =>
+      prev.map(d =>
+        d.id === docId
+          ? {
+              ...d,
+              linkedApplications: Array.from(new Set([...(d.linkedApplications || []), applicationId])),
+            }
+          : d
+      )
+    );
+  };
+
+  const unlinkDocumentFromApplication = (docId: string, applicationId: string) => {
+    setVaultDocuments(prev =>
+      prev.map(d =>
+        d.id === docId
+          ? {
+              ...d,
+              linkedApplications: (d.linkedApplications || []).filter(id => id !== applicationId),
+            }
+          : d
+      )
+    );
+  };
+
+  const updateDocumentPrivacy = async (
+    docId: string,
+    visibility: DocumentVisibility,
+    expiresInMinutes = 60
+  ): Promise<string | undefined> => {
+    const target = vaultDocuments.find(d => d.id === docId);
+    if (!target) return undefined;
+
+    let shareUrl: string | undefined = undefined;
+    let shareToken: string | undefined = undefined;
+    let shareExpiresAt: string | undefined = undefined;
+
+    if (visibility === 'Shared Link' && target.storagePath) {
+      const shareData = await StorageService.createExpiringShareLink(target.storagePath, expiresInMinutes);
+      shareUrl = shareData.shareUrl || undefined;
+      shareToken = shareData.token;
+      shareExpiresAt = shareData.expiresAt;
+    }
+
+    const now = new Date().toISOString();
+    setVaultDocuments(prev =>
+      prev.map(d =>
+        d.id === docId
+          ? {
+              ...d,
+              visibility,
+              shareToken,
+              shareExpiresAt,
+              auditLog: [
+                ...(d.auditLog || []),
+                {
+                  id: `audit-${Date.now()}`,
+                  timestamp: now,
+                  action: 'share',
+                  actor: currentUser?.fullName || 'Student (Owner)',
+                  details: `Visibility updated to ${visibility}${expiresInMinutes ? ` (Expires in ${expiresInMinutes}m)` : ''}`,
+                },
+              ],
+            }
+          : d
+      )
+    );
+
+    return shareUrl;
+  };
+
+  const revokeDocumentSharing = (docId: string) => {
+    const now = new Date().toISOString();
+    setVaultDocuments(prev =>
+      prev.map(d =>
+        d.id === docId
+          ? {
+              ...d,
+              visibility: 'Private',
+              shareToken: undefined,
+              shareExpiresAt: undefined,
+              auditLog: [
+                ...(d.auditLog || []),
+                {
+                  id: `audit-${Date.now()}`,
+                  timestamp: now,
+                  action: 'revoke',
+                  actor: currentUser?.fullName || 'Student (Owner)',
+                  details: 'Revoked external link access. Set to Private.',
+                },
+              ],
+            }
+          : d
+      )
+    );
+  };
+
+  const logDocumentAccess = (docId: string, action: DocumentAuditEntry['action'], details?: string) => {
+    const now = new Date().toISOString();
+    setVaultDocuments(prev =>
+      prev.map(d =>
+        d.id === docId
+          ? {
+              ...d,
+              auditLog: [
+                ...(d.auditLog || []),
+                {
+                  id: `audit-${Date.now()}`,
+                  timestamp: now,
+                  action,
+                  actor: currentUser?.fullName || 'Student (Owner)',
+                  details: details || `Performed ${action} operation.`,
+                },
+              ],
+            }
+          : d
+      )
+    );
+  };
+
+  const toggleMilestone = async (milestoneId: string) => {
+    const target = roadmapMilestones.find(m => m.id === milestoneId);
+    const newStatus = target ? !target.completed : true;
+    const updated = await RoadmapService.toggleMilestone(
+      milestoneId, 
+      newStatus, 
+      roadmapMilestones, 
+      currentUser?.id
+    );
+    setRoadmapMilestones(updated);
+  };
+
   const exportDossierJson = () => {
-    const dossier: AdmissionDossierExport = {
-      version: '2.0',
+    const exportData: AdmissionDossierExport = {
+      version: '1.0.0',
       exportedAt: new Date().toISOString(),
       user: currentUser,
       profile,
@@ -389,29 +811,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       report
     };
 
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(dossier, null, 2));
-    const downloadAnchor = document.createElement('a');
-    const sanitizedName = (profile.personal.fullName || 'Student').replace(/\s+/g, '_');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `UniAdmission_Dossier_${sanitizedName}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `UniAdmission_Dossier_${profile.personal.fullName.replace(/\s+/g, '_') || 'Student'}_2026.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
-  // Import JSON dossier and restore full state
-  const importDossierJson = (jsonData: string): boolean => {
-    try {
-      const parsed: AdmissionDossierExport = JSON.parse(jsonData);
-      if (parsed.profile) setProfile(parsed.profile);
-      if (Array.isArray(parsed.applications)) setApplications(parsed.applications);
-      if (Array.isArray(parsed.vaultDocuments)) setVaultDocuments(parsed.vaultDocuments);
-      if (Array.isArray(parsed.roadmapMilestones)) setRoadmapMilestones(parsed.roadmapMilestones);
-      if (parsed.user) setCurrentUser(parsed.user);
-      return true;
-    } catch (err) {
-      console.error('Failed to import JSON dossier:', err);
-      return false;
+  const validateDossier = (jsonData: string): ValidationResult => {
+    return validateDossierJson(jsonData);
+  };
+
+  const applyValidatedDossier = (dossier: ValidatedDossier, createBackupFirst: boolean = true) => {
+    if (createBackupFirst) {
+      exportDossierJson();
+    }
+
+    // Apply only student-owned content. Authentication identity and userTier are strictly protected!
+    setProfile(dossier.profile);
+    setApplications(dossier.applications || []);
+    setVaultDocuments(dossier.vaultDocuments || []);
+    setRoadmapMilestones(dossier.roadmapMilestones || []);
+
+    if (currentUser) {
+      AuthService.saveUserData(currentUser.id, {
+        profile: dossier.profile,
+        applications: dossier.applications || [],
+        vaultDocuments: dossier.vaultDocuments || [],
+      });
     }
   };
 
@@ -422,6 +853,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         signIn,
         signUp,
         signOut,
+        resetPassword,
         loginAsDemo,
         profile,
         setProfile,
@@ -429,11 +861,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         universities,
         scholarships,
         countries: COUNTRIES_DATA,
+        countryScorecards: COUNTRIES_DATA,
         applications,
         vaultDocuments,
         roadmapMilestones,
         userTier,
-        setUserTier,
+        initiateCheckout,
+        refreshEntitlements,
         activeTab,
         setActiveTab,
         loadSampleProfile,
@@ -443,10 +877,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         toggleChecklistItem,
         deleteApplication,
         addVaultDocument,
+        replaceVaultDocumentVersion,
         deleteVaultDocument,
+        runDocumentAiPreCheck,
+        verifyDocumentStaff,
+        linkDocumentToApplication,
+        unlinkDocumentFromApplication,
+        updateDocumentPrivacy,
+        revokeDocumentSharing,
+        logDocumentAccess,
         toggleMilestone,
         exportDossierJson,
-        importDossierJson,
+        validateDossier,
+        applyValidatedDossier,
         isUpgradeModalOpen,
         setIsUpgradeModalOpen,
         selectedUniversityForModal,

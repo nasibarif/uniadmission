@@ -135,8 +135,13 @@ export interface AssessmentReport {
   };
 }
 
+export type DataSourceVerificationStatus = 'Verified Official' | 'Pending Annual Audit' | 'Community Reported';
+
+export type AdmissionCategory = 'Likely' | 'Target' | 'Reach' | 'High Reach' | 'Safe';
+
 export interface UniversityProgram {
   id: string;
+  universityId?: string;
   name: string;
   degree: DegreeLevel;
   department: string;
@@ -148,6 +153,13 @@ export interface UniversityProgram {
   minSat?: number;
   minGre?: number;
   officialApplyUrl: string;
+  intakeSemesters?: string[];
+  applicationRoute?: 'Common App' | 'UCAS' | 'uni-assist VPD' | 'Direct Institution Portal' | 'Coalition App' | 'OUAC' | 'Studielink' | 'Other';
+  prerequisites?: string[];
+  sourceUrl?: string;
+  sourceName?: string;
+  lastVerifiedAt?: string;
+  verificationStatus?: DataSourceVerificationStatus;
 }
 
 export interface University {
@@ -187,15 +199,39 @@ export interface University {
   officialPortalUrl: string;
   featuredScholarshipIds: string[];
   
+  // Step 11: Source attribution & Provenance
+  sourceUrl?: string;
+  sourceName?: string;
+  lastVerifiedAt?: string;
+  verificationStatus?: DataSourceVerificationStatus;
+  nextReviewAt?: string;
+
   // Computed dynamically per student profile
   matchScore?: number;
-  category?: 'Reach' | 'Target' | 'Safe';
+  category?: AdmissionCategory;
   admissionProbability?: 'High' | 'Moderate' | 'Reach';
   scholarshipProbability?: 'High' | 'Moderate' | 'Low';
   estimatedNetCostUSD?: number;
   whyMatch?: string[];
   missingPrereqs?: string[];
+  riskFactors?: string[];
+  admissionDisclaimer?: string;
 }
+
+export interface ScholarshipCriterionResult {
+  criterion: string;
+  status: 'met' | 'unmet' | 'warning' | 'info';
+  details: string;
+}
+
+export type ScholarshipEligibilityStatus = 
+  | 'Eligible' 
+  | 'Potentially Eligible' 
+  | 'Not Eligible' 
+  | 'Needs Verification'
+  | 'Likely Eligible' 
+  | 'Competitive' 
+  | 'Reach / Needs Improvement';
 
 export interface Scholarship {
   id: string;
@@ -209,6 +245,7 @@ export interface Scholarship {
   deadline: string;
   eligibleDegrees: DegreeLevel[];
   eligibleCountries: string[]; // ['All', 'USA', 'International', 'Developing Countries']
+  eligibleNationalities?: string[];
   targetMajors: string[]; // ['All', 'STEM', 'Computer Science', 'Business', 'Engineering']
   academicCriteria: {
     minGpa?: number;
@@ -217,15 +254,26 @@ export interface Scholarship {
     minGre?: number;
   };
   financialNeedRequired: boolean;
+  requiresNomination?: boolean;
+  requiresSeparateApplication?: boolean;
+  annualAmountUSD?: number;
+  renewalConditions?: string;
   description: string;
   applicationUrl: string;
   documentsRequired: string[];
 
-  // Computed per profile
-  eligibilityStatus?: 'Likely Eligible' | 'Competitive' | 'Reach / Needs Improvement' | 'Not Eligible';
+  // Step 11: Source attribution
+  sourceUrl?: string;
+  sourceName?: string;
+  lastVerifiedAt?: string;
+  verificationStatus?: DataSourceVerificationStatus;
+
+  // Computed per profile (Step 13)
+  eligibilityStatus?: ScholarshipEligibilityStatus;
   matchScore?: number;
   whyYouQualify?: string[];
   missingRequirements?: string[];
+  criteriaAudit?: ScholarshipCriterionResult[];
 }
 
 export interface CountryScorecard {
@@ -245,6 +293,17 @@ export interface CountryScorecard {
   popularUniversities: string[];
   partTimeWorkHoursPerWeek: number;
   averageLivingPerYearUSD: number;
+
+  // Step 17: Multi-dimensional country fit
+  dimensions?: {
+    academicFit: number;
+    budgetFit: number;
+    scholarshipAvailability: number;
+    programFit: number;
+    languageFit: number;
+    applicationEase: number;
+    postStudyOpportunity: number;
+  };
 }
 
 export interface ApplicationChecklistItem {
@@ -254,6 +313,9 @@ export interface ApplicationChecklistItem {
   required: boolean;
   category: 'Account' | 'Academics' | 'Tests' | 'Essays' | 'Recommendations' | 'Financial' | 'Submission';
   dueDate?: string;
+  requirementId?: string;
+  sourceUrl?: string;
+  isBlocker?: boolean;
 }
 
 export type ApplicationStage = 
@@ -275,7 +337,7 @@ export interface ApplicationItem {
   major: string;
   degree: DegreeLevel;
   stage: ApplicationStage;
-  category: 'Reach' | 'Target' | 'Safe';
+  category: AdmissionCategory;
   deadline: string;
   deadlineType: 'Early Action' | 'Early Decision' | 'Regular Decision' | 'Rolling' | 'Scholarship Deadline';
   progressPercent: number;
@@ -286,6 +348,64 @@ export interface ApplicationItem {
   scholarshipApplied?: string;
   createdAt: string;
   updatedAt: string;
+
+  // Steps 12 & 23: Program-Specific Applications
+  programId?: string;
+  programName?: string;
+  intakeSemester?: string;
+  applicationRoute?: string;
+
+  // Steps 21 & 22: Deadline Intelligence & Readiness Score
+  readinessScore?: number;
+  daysRemaining?: number;
+  urgencyBand?: 'Urgent' | 'Approaching' | 'Upcoming' | 'Future' | 'Passed';
+  nextRecommendedAction?: string;
+}
+
+export type DocumentVerificationStatus =
+  | 'Uploaded'
+  | 'Processing'
+  | 'AI Checked'
+  | 'Needs Review'
+  | 'Verified by UniAdmission'
+  | 'Rejected'
+  | 'Draft / In Progress'
+  | 'Verified'
+  | 'Needs Update'
+  | 'Missing';
+
+export interface DocumentVerificationDetails {
+  status: DocumentVerificationStatus;
+  verifiedBy: string; // e.g. "UniAdmission AI Inspector" | "Senior Admissions Advisor"
+  verifiedAt: string;
+  actorType: 'system' | 'ai_auditor' | 'staff';
+  notes?: string;
+  checklistPassed?: string[];
+  issuesDetected?: string[];
+}
+
+export type DocumentVisibility = 'Private' | 'Counselor Only' | 'Shared Link';
+
+export interface DocumentAuditEntry {
+  id: string;
+  timestamp: string;
+  action: 'upload' | 'preview' | 'download' | 'share' | 'revoke' | 'version_update' | 'verify';
+  actor: string;
+  ipAddress?: string;
+  details?: string;
+}
+
+export interface ApplicationDocumentRequirement {
+  id: string;
+  applicationId: string;
+  documentType: VaultDocument['type'];
+  title: string;
+  requirementType: 'required' | 'conditional' | 'optional';
+  description: string;
+  acceptedFormats: string[];
+  sourceUrl?: string;
+  lastVerifiedDate: string;
+  fulfilledDocId?: string;
 }
 
 export interface VaultDocument {
@@ -306,11 +426,19 @@ export interface VaultDocument {
     | 'Portfolio';
   fileName: string;
   uploadDate: string;
-  status: 'Verified' | 'Draft / In Progress' | 'Needs Update' | 'Missing';
+  status: DocumentVerificationStatus;
   fileSizeBytes?: string;
   notes?: string;
   version?: number;
+  storagePath?: string;
+  mimeType?: string;
   linkedUniversities?: string[];
+  linkedApplications?: string[];
+  verificationDetails?: DocumentVerificationDetails;
+  visibility?: DocumentVisibility;
+  shareExpiresAt?: string;
+  shareToken?: string;
+  auditLog?: DocumentAuditEntry[];
 }
 
 export interface RoadmapMilestone {
@@ -320,8 +448,11 @@ export interface RoadmapMilestone {
   title: string;
   description: string;
   completed: boolean;
+  completedAt?: string;
   priority: 'High' | 'Medium' | 'Normal';
   category: 'Testing' | 'Shortlisting' | 'Drafting' | 'Recommendations' | 'Submission' | 'Scholarships' | 'Visa';
+  userId?: string;
+  applicationId?: string;
 }
 
 export type UserTier = 'Free' | 'Explorer' | 'Application' | 'Complete' | 'School';

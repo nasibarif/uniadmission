@@ -1,243 +1,188 @@
-import type { UserAccount, StudentProfile, ApplicationItem, VaultDocument } from '../types';
+import type { UserAccount, StudentProfile, ApplicationItem, VaultDocument, UserTier } from '../types';
 import { SAMPLE_PROFILES } from '../data/sampleProfiles';
+import { supabase, isSupabaseConfigured } from './supabaseClient';
+import { sanitizeText, sanitizeObject } from '../utils/security';
 
-const USERS_DB_KEY = 'uniadmission_users_db';
 const SESSION_KEY = 'uniadmission_current_session';
+const LOCAL_USER_DATA_PREFIX = 'uniadmission_userdata_';
 
-export interface StoredUserData {
+// Remove legacy insecure database containing plain text passwords if present
+try {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.removeItem('uniadmission_users_db');
+  }
+} catch {
+  // Ignore storage access errors in restricted sandbox environments
+}
+
+export interface UserSessionData {
   account: UserAccount;
-  passwordHash: string; // Stored locally for mock/client-side auth
   profile: StudentProfile;
   applications: ApplicationItem[];
   vaultDocuments: VaultDocument[];
 }
 
+export interface AuthResult {
+  success: boolean;
+  user?: UserAccount;
+  error?: string;
+  requiresEmailVerification?: boolean;
+  message?: string;
+}
+
 export class AuthService {
   /**
-   * Get all registered users from localStorage database
+   * Cleans and returns the cached session user from browser storage
    */
-  public static getRegisteredUsers(): StoredUserData[] {
-    const data = localStorage.getItem(USERS_DB_KEY);
-    if (!data) {
-      // Seed with initial default demo users
-      const seeded: StoredUserData[] = [
-        {
-          account: {
-            id: 'usr-rahim-demo',
-            fullName: 'Rahim Chowdhury',
-            email: 'rahim@example.com',
-            tier: 'Complete',
-            createdAt: '2026-08-01',
-            lastLoginAt: new Date().toISOString()
-          },
-          passwordHash: 'demo123',
-          profile: SAMPLE_PROFILES[0].profile,
-          applications: [
-            {
-              id: 'app-purdue',
-              universityId: 'purdue',
-              universityName: 'Purdue University West Lafayette',
-              country: 'USA',
-              flag: '🇺🇸',
-              major: 'Computer Science (BS)',
-              degree: "Bachelor's",
-              stage: 'Preparing',
-              category: 'Target',
-              deadline: 'Nov 1, 2026',
-              deadlineType: 'Early Action',
-              progressPercent: 65,
-              checklist: [
-                { id: 'c1', title: 'Common App Account Created', completed: true, required: true, category: 'Account' },
-                { id: 'c2', title: 'High School Transcripts Uploaded', completed: true, required: true, category: 'Academics' },
-                { id: 'c3', title: 'IELTS / English Score Sent', completed: true, required: true, category: 'Tests' },
-                { id: 'c4', title: 'SAT Score Report Ordered', completed: true, required: true, category: 'Tests' },
-                { id: 'c5', title: 'Purdue Supplemental Essays Drafted', completed: false, required: true, category: 'Essays' },
-                { id: 'c6', title: '1 STEM Teacher LOR Requested', completed: false, required: true, category: 'Recommendations' },
-                { id: 'c7', title: 'Application Fee Paid ($60)', completed: false, required: true, category: 'Submission' }
-              ],
-              notes: 'Priority deadline Nov 1 for Presidential Scholarship consideration ($16k/yr).',
-              applicationFeeUSD: 60,
-              officialPortalUrl: 'https://admissions.purdue.edu/',
-              scholarshipApplied: 'Purdue Presidential Merit Scholarship',
-              createdAt: '2026-09-01',
-              updatedAt: '2026-09-08'
-            },
-            {
-              id: 'app-uoft',
-              universityId: 'utoronto',
-              universityName: 'University of Toronto',
-              country: 'Canada',
-              flag: '🇨🇦',
-              major: 'Computer Science (BSc)',
-              degree: "Bachelor's",
-              stage: 'Documents Missing',
-              category: 'Reach',
-              deadline: 'Nov 7, 2026',
-              deadlineType: 'Early Action',
-              progressPercent: 40,
-              checklist: [
-                { id: 'u1', title: 'Join U of T Portal Account', completed: true, required: true, category: 'Account' },
-                { id: 'u2', title: 'Official High School Transcripts', completed: true, required: true, category: 'Academics' },
-                { id: 'u3', title: 'IELTS Score Official TRF Code', completed: false, required: true, category: 'Tests' },
-                { id: 'u4', title: 'Engineering / CS Video Interview', completed: false, required: true, category: 'Submission' },
-                { id: 'u5', title: 'Lester B. Pearson High School Nomination', completed: false, required: true, category: 'Recommendations' }
-              ],
-              notes: 'Lester B. Pearson full-ride nomination deadline is Nov 30.',
-              applicationFeeUSD: 130,
-              officialPortalUrl: 'https://future.utoronto.ca/',
-              scholarshipApplied: 'Lester B. Pearson International Scholarship',
-              createdAt: '2026-09-02',
-              updatedAt: '2026-09-08'
-            },
-            {
-              id: 'app-uta',
-              universityId: 'ut-arlington',
-              universityName: 'University of Texas at Arlington',
-              country: 'USA',
-              flag: '🇺🇸',
-              major: 'Computer Science & Software Engineering (BS)',
-              degree: "Bachelor's",
-              stage: 'Submitted',
-              category: 'Safe',
-              deadline: 'Feb 15, 2027',
-              deadlineType: 'Regular Decision',
-              progressPercent: 100,
-              checklist: [
-                { id: 't1', title: 'ApplyTexas Form Submitted', completed: true, required: true, category: 'Account' },
-                { id: 't2', title: 'Transcripts Evaluated', completed: true, required: true, category: 'Academics' },
-                { id: 't3', title: 'IELTS Score Verified', completed: true, required: true, category: 'Tests' },
-                { id: 't4', title: 'Maverick Scholarship Application', completed: true, required: true, category: 'Financial' },
-                { id: 't5', title: 'Application Fee ($75)', completed: true, required: true, category: 'Submission' }
-              ],
-              notes: 'Submitted on Sep 5. Awaiting Maverick scholarship & in-state waiver notification.',
-              applicationFeeUSD: 75,
-              officialPortalUrl: 'https://www.uta.edu/admissions',
-              scholarshipApplied: 'Maverick Academic Scholarship + In-State Waiver',
-              createdAt: '2026-08-20',
-              updatedAt: '2026-09-05'
-            }
-          ],
-          vaultDocuments: [
-            {
-              id: 'doc-1',
-              title: 'HSC Official Transcript (Golden A+)',
-              type: 'Academic Transcript',
-              fileName: 'HSC_Transcript_Rahim_2026.pdf',
-              uploadDate: '2026-08-15',
-              status: 'Verified',
-              fileSizeBytes: '1.4 MB',
-              notes: 'Attested by Education Board controller of examinations.',
-              linkedUniversities: ['Purdue', 'U of T', 'UTA']
-            },
-            {
-              id: 'doc-2',
-              title: 'Official IELTS Academic Test Report (7.0)',
-              type: 'IELTS Scorecard',
-              fileName: 'IELTS_TRF_Rahim_Band7.0.pdf',
-              uploadDate: '2026-08-18',
-              status: 'Verified',
-              fileSizeBytes: '840 KB',
-              notes: 'TRF Number: 24BD001928RAH001A (Valid through May 2028).',
-              linkedUniversities: ['Purdue', 'UTA']
-            }
-          ]
-        }
-      ];
-      localStorage.setItem(USERS_DB_KEY, JSON.stringify(seeded));
-      return seeded;
-    }
+  public static getCachedUser(): UserAccount | null {
     try {
-      return JSON.parse(data);
-    } catch {
-      return [];
-    }
-  }
-
-  /**
-   * Save all registered users to database
-   */
-  private static saveRegisteredUsers(users: StoredUserData[]) {
-    localStorage.setItem(USERS_DB_KEY, JSON.stringify(users));
-  }
-
-  /**
-   * Get current session user
-   */
-  public static getCurrentUser(): UserAccount | null {
-    const session = localStorage.getItem(SESSION_KEY);
-    if (!session) return null;
-    try {
-      return JSON.parse(session);
+      const session = localStorage.getItem(SESSION_KEY);
+      if (!session) return null;
+      return JSON.parse(session) as UserAccount;
     } catch {
       return null;
     }
   }
 
   /**
-   * Get full user data for active session
+   * Resolves the current user from Supabase auth session or fallback cache
    */
-  public static getUserData(userId: string): StoredUserData | null {
-    const users = this.getRegisteredUsers();
-    return users.find(u => u.account.id === userId) || null;
-  }
-
-  /**
-   * Save user data update
-   */
-  public static updateUserData(userId: string, updates: Partial<Omit<StoredUserData, 'account'>> & { account?: Partial<UserAccount> }) {
-    const users = this.getRegisteredUsers();
-    const index = users.findIndex(u => u.account.id === userId);
-    if (index !== -1) {
-      const existing = users[index];
-      users[index] = {
-        ...existing,
-        ...updates,
-        account: {
-          ...existing.account,
-          ...(updates.account || {}),
-          lastLoginAt: new Date().toISOString()
+  public static async getCurrentUser(): Promise<UserAccount | null> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error || !session) {
+          localStorage.removeItem(SESSION_KEY);
+          return null;
         }
-      };
-      this.saveRegisteredUsers(users);
-      
-      // Update session if it's the current user
-      const current = this.getCurrentUser();
-      if (current && current.id === userId) {
-        localStorage.setItem(SESSION_KEY, JSON.stringify(users[index].account));
+
+        const userAccount: UserAccount = {
+          id: session.user.id,
+          fullName: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Student',
+          email: session.user.email || '',
+          tier: (session.user.user_metadata?.tier as UserTier) || 'Explorer',
+          createdAt: session.user.created_at ? session.user.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+          lastLoginAt: session.user.last_sign_in_at || new Date().toISOString(),
+        };
+
+        localStorage.setItem(SESSION_KEY, JSON.stringify(userAccount));
+        return userAccount;
+      } catch (err) {
+        console.warn('Failed to retrieve Supabase session:', err);
+        return this.getCachedUser();
       }
     }
+
+    return this.getCachedUser();
   }
 
   /**
-   * Sign In with email and password
+   * Subscribe to auth changes across tabs and token refreshes
    */
-  public static signIn(email: string, password: string): { success: boolean; user?: UserAccount; error?: string } {
-    const users = this.getRegisteredUsers();
-    const cleanEmail = email.trim().toLowerCase();
-    const user = users.find(u => u.account.email.toLowerCase() === cleanEmail);
+  public static onAuthStateChange(callback: (user: UserAccount | null) => void): () => void {
+    if (isSupabaseConfigured() && supabase) {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (session?.user) {
+          const userAccount: UserAccount = {
+            id: session.user.id,
+            fullName: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Student',
+            email: session.user.email || '',
+            tier: (session.user.user_metadata?.tier as UserTier) || 'Explorer',
+            createdAt: session.user.created_at ? session.user.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+            lastLoginAt: session.user.last_sign_in_at || new Date().toISOString(),
+          };
+          localStorage.setItem(SESSION_KEY, JSON.stringify(userAccount));
+          callback(userAccount);
+        } else if (event === 'SIGNED_OUT') {
+          localStorage.removeItem(SESSION_KEY);
+          callback(null);
+        }
+      });
 
-    if (!user) {
-      return { success: false, error: 'No account found with this email address.' };
+      return () => {
+        subscription.unsubscribe();
+      };
     }
 
-    if (user.passwordHash !== password.trim()) {
-      return { success: false, error: 'Incorrect password. Please verify and try again.' };
-    }
-
-    // Update last login
-    user.account.lastLoginAt = new Date().toISOString();
-    this.saveRegisteredUsers(users);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(user.account));
-
-    return { success: true, user: user.account };
+    // Return no-op unloader for local fallback mode
+    return () => {};
   }
 
   /**
-   * Create a fresh new student account
+   * Sign In with email and password via Supabase Auth
    */
-  public static signUp(fullName: string, email: string, password: string): { success: boolean; user?: UserAccount; error?: string } {
+  public static async signIn(email: string, pass: string): Promise<AuthResult> {
     const cleanEmail = email.trim().toLowerCase();
-    const cleanName = fullName.trim();
+    const cleanPassword = pass.trim();
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+    if (!cleanPassword) {
+      return { success: false, error: 'Please enter your password.' };
+    }
+
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password: cleanPassword,
+        });
+
+        if (error) {
+          if (error.message.toLowerCase().includes('email not confirmed')) {
+            return {
+              success: false,
+              requiresEmailVerification: true,
+              error: 'Please confirm your email address before signing in. Check your inbox for the verification link.',
+            };
+          }
+          return { success: false, error: error.message };
+        }
+
+        if (!data.user) {
+          return { success: false, error: 'Unable to authenticate. Please try again.' };
+        }
+
+        const userAccount: UserAccount = {
+          id: data.user.id,
+          fullName: data.user.user_metadata?.full_name || cleanEmail.split('@')[0],
+          email: data.user.email || cleanEmail,
+          tier: (data.user.user_metadata?.tier as UserTier) || 'Explorer',
+          createdAt: data.user.created_at ? data.user.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+          lastLoginAt: new Date().toISOString(),
+        };
+
+        localStorage.setItem(SESSION_KEY, JSON.stringify(userAccount));
+        return { success: true, user: userAccount };
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Network error occurred while signing in.' };
+      }
+    }
+
+    // Local sandbox mode (when Supabase credentials are not yet configured in .env)
+    // No passwords or password hashes are stored in localStorage
+    const localUserId = `usr-${btoa(cleanEmail).replace(/=/g, '')}`;
+    const userAccount: UserAccount = {
+      id: localUserId,
+      fullName: cleanEmail.split('@')[0],
+      email: cleanEmail,
+      tier: 'Explorer',
+      createdAt: new Date().toISOString().split('T')[0],
+      lastLoginAt: new Date().toISOString(),
+    };
+
+    localStorage.setItem(SESSION_KEY, JSON.stringify(userAccount));
+    return { success: true, user: userAccount };
+  }
+
+  /**
+   * Register a new student account via Supabase Auth
+   */
+  public static async signUp(fullName: string, email: string, pass: string): Promise<AuthResult> {
+    const cleanName = sanitizeText(fullName, 150);
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPassword = pass.trim();
 
     if (!cleanName) {
       return { success: false, error: 'Full legal name is required.' };
@@ -245,112 +190,161 @@ export class AuthService {
     if (!cleanEmail || !cleanEmail.includes('@')) {
       return { success: false, error: 'Please enter a valid email address.' };
     }
-    if (!password || password.length < 4) {
-      return { success: false, error: 'Password must be at least 4 characters.' };
+    if (cleanPassword.length < 6) {
+      return { success: false, error: 'Password must be at least 6 characters long.' };
     }
 
-    const users = this.getRegisteredUsers();
-    const existing = users.find(u => u.account.email.toLowerCase() === cleanEmail);
-    if (existing) {
-      return { success: false, error: 'An account with this email already exists. Please sign in instead.' };
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password: cleanPassword,
+          options: {
+            data: {
+              full_name: cleanName,
+              tier: 'Explorer',
+            },
+          },
+        });
+
+        if (error) {
+          return { success: false, error: error.message };
+        }
+
+        // If email confirmation is required, session might be null until confirmed
+        if (data.user && !data.session) {
+          return {
+            success: true,
+            requiresEmailVerification: true,
+            message: 'Registration successful! A confirmation email has been sent. Please verify your email to log in.',
+          };
+        }
+
+        if (data.user) {
+          const userAccount: UserAccount = {
+            id: data.user.id,
+            fullName: cleanName,
+            email: cleanEmail,
+            tier: 'Explorer',
+            createdAt: new Date().toISOString().split('T')[0],
+            lastLoginAt: new Date().toISOString(),
+          };
+          localStorage.setItem(SESSION_KEY, JSON.stringify(userAccount));
+          return { success: true, user: userAccount };
+        }
+
+        return { success: false, error: 'Could not complete registration. Please try again.' };
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Network error occurred during registration.' };
+      }
     }
 
-    const userId = `usr-${Date.now()}`;
-    const newAccount: UserAccount = {
-      id: userId,
+    // Local sandbox mode
+    const localUserId = `usr-${Date.now()}`;
+    const userAccount: UserAccount = {
+      id: localUserId,
       fullName: cleanName,
       email: cleanEmail,
       tier: 'Explorer',
       createdAt: new Date().toISOString().split('T')[0],
-      lastLoginAt: new Date().toISOString()
+      lastLoginAt: new Date().toISOString(),
     };
 
-    // Clean, fresh student profile
-    const freshProfile: StudentProfile = {
-      personal: {
-        fullName: cleanName,
-        email: cleanEmail,
-        phone: '',
-        nationality: '',
-        currentCity: ''
-      },
-      academic: {
-        qualification: 'HSC',
-        gpa: 4.0,
-        gpaScale: '5.0',
-        rawGpaText: 'GPA 5.00',
-        graduationYear: 2026,
-        institution: '',
-        subjects: [],
-        academicAwards: []
-      },
-      intendedStudy: {
-        degreeLevel: "Bachelor's",
-        major: 'Computer Science',
-        secondaryMajors: ['Software Engineering', 'Data Science'],
-        targetIntake: 'Fall 2027',
-        careerGoal: ''
-      },
-      preferences: {
-        countries: ['USA', 'Canada', 'Germany'],
-        preferredSetting: 'Urban'
-      },
-      financial: {
-        maxYearlyBudgetUSD: 20000,
-        tuitionBudgetUSD: 12000,
-        livingBudgetUSD: 8000,
-        scholarshipNeed: 'Substantial (50-80%)',
-        willingToWorkPartTime: true
-      },
-      standardizedTests: {
-        englishTest: {
-          type: 'IELTS',
-          overallScore: 6.5
-        },
-        standardizedTest: {
-          type: 'SAT',
-          totalScore: 1350
-        }
-      },
-      extracurriculars: [],
-      achievements: []
-    };
-
-    const newUserData: StoredUserData = {
-      account: newAccount,
-      passwordHash: password.trim(),
-      profile: freshProfile,
-      applications: [],
-      vaultDocuments: []
-    };
-
-    users.push(newUserData);
-    this.saveRegisteredUsers(users);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(newAccount));
-
-    return { success: true, user: newAccount };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(userAccount));
+    return { success: true, user: userAccount };
   }
 
   /**
-   * Log into a demo sample account (instant test-drive)
+   * Send a password reset email via Supabase Auth
+   */
+  public static async resetPassword(email: string): Promise<AuthResult> {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+          redirectTo: typeof window !== 'undefined' ? `${window.location.origin}/reset-password` : undefined,
+        });
+
+        if (error) {
+          return { success: false, error: error.message };
+        }
+
+        return {
+          success: true,
+          message: 'Password reset email sent! Check your inbox for instructions to set a new password.',
+        };
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Failed to send password reset email.' };
+      }
+    }
+
+    return {
+      success: true,
+      message: 'Demo mode: In production with Supabase connected, a secure reset link is dispatched to your email address.',
+    };
+  }
+
+  /**
+   * Update password for an active session
+   */
+  public static async updatePassword(newPassword: string): Promise<AuthResult> {
+    if (newPassword.length < 6) {
+      return { success: false, error: 'New password must be at least 6 characters.' };
+    }
+
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { error } = await supabase.auth.updateUser({ password: newPassword });
+        if (error) return { success: false, error: error.message };
+        return { success: true, message: 'Password updated successfully.' };
+      } catch (err: any) {
+        return { success: false, error: err?.message || 'Failed to update password.' };
+      }
+    }
+
+    return { success: true, message: 'Password updated successfully in sandbox session.' };
+  }
+
+  /**
+   * Log out active session
+   */
+  public static async signOut(): Promise<void> {
+    try {
+      if (isSupabaseConfigured() && supabase) {
+        await supabase.auth.signOut();
+      }
+    } catch (err) {
+      console.warn('Sign out error:', err);
+    } finally {
+      localStorage.removeItem(SESSION_KEY);
+    }
+  }
+
+  /**
+   * Test-drive an instant demo profile without passwords
    */
   public static loginAsDemo(sampleIndex: number = 0): UserAccount {
     const sample = SAMPLE_PROFILES[sampleIndex] || SAMPLE_PROFILES[0];
     const demoId = `usr-demo-${sampleIndex}`;
-    const users = this.getRegisteredUsers();
 
-    let existing = users.find(u => u.account.id === demoId || u.account.email === sample.profile.personal.email);
-    if (!existing) {
-      existing = {
-        account: {
-          id: demoId,
-          fullName: sample.profile.personal.fullName,
-          email: sample.profile.personal.email,
-          tier: 'Complete',
-          createdAt: '2026-08-01',
-          lastLoginAt: new Date().toISOString()
-        },
-        passwordHash: 'demo123',
+    const demoAccount: UserAccount = {
+      id: demoId,
+      fullName: sample.profile.personal.fullName,
+      email: sample.profile.personal.email,
+      tier: 'Complete',
+      createdAt: '2026-08-01',
+      lastLoginAt: new Date().toISOString(),
+    };
+
+    // Seed demo workspace in user-isolated storage
+    const demoKey = `${LOCAL_USER_DATA_PREFIX}${demoId}`;
+    if (!localStorage.getItem(demoKey)) {
+      const demoData: UserSessionData = {
+        account: demoAccount,
         profile: sample.profile,
         applications: [
           {
@@ -371,14 +365,14 @@ export class AuthService {
               { id: 'd2', title: 'Transcripts Uploaded', completed: true, required: true, category: 'Academics' },
               { id: 'd3', title: 'Test Scores Sent', completed: true, required: true, category: 'Tests' },
               { id: 'd4', title: 'Supplemental Essay Drafted', completed: false, required: true, category: 'Essays' },
-              { id: 'd5', title: 'Teacher LORs Requested', completed: false, required: true, category: 'Recommendations' }
+              { id: 'd5', title: 'Teacher LORs Requested', completed: false, required: true, category: 'Recommendations' },
             ],
             notes: 'Early Action application.',
             applicationFeeUSD: 60,
             officialPortalUrl: 'https://admissions.purdue.edu/',
             createdAt: '2026-09-01',
-            updatedAt: '2026-09-08'
-          }
+            updatedAt: '2026-09-08',
+          },
         ],
         vaultDocuments: [
           {
@@ -388,24 +382,201 @@ export class AuthService {
             fileName: 'Official_Transcript_Verified.pdf',
             uploadDate: '2026-08-15',
             status: 'Verified',
-            fileSizeBytes: '1.4 MB'
-          }
-        ]
+            fileSizeBytes: '1.4 MB',
+          },
+        ],
       };
-      users.push(existing);
-    } else {
-      existing.account.lastLoginAt = new Date().toISOString();
+      localStorage.setItem(demoKey, JSON.stringify(demoData));
     }
 
-    this.saveRegisteredUsers(users);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(existing.account));
-    return existing.account;
+    localStorage.setItem(SESSION_KEY, JSON.stringify(demoAccount));
+    return demoAccount;
   }
 
   /**
-   * Log out current user
+   * Fetch user data (profile, applications, documents) from Supabase or local sandbox
    */
-  public static signOut() {
-    localStorage.removeItem(SESSION_KEY);
+  public static async fetchUserData(userId: string): Promise<UserSessionData | null> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data: profileRow, error: profileErr } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .single();
+
+        if (profileErr) {
+          console.warn('Could not fetch Supabase profile:', profileErr.message);
+        }
+
+        const { data: appsRows } = await supabase
+          .from('applications')
+          .select('*')
+          .eq('user_id', userId);
+
+        const { data: docRows } = await supabase
+          .from('vault_documents')
+          .select('*')
+          .eq('user_id', userId);
+
+        if (profileRow) {
+          const profile: StudentProfile = {
+            personal: profileRow.personal || {
+              fullName: profileRow.full_name || '',
+              email: profileRow.email || '',
+              phone: '',
+              nationality: '',
+              currentCity: '',
+            },
+            academic: profileRow.academic || SAMPLE_PROFILES[0].profile.academic,
+            intendedStudy: profileRow.intended_study || SAMPLE_PROFILES[0].profile.intendedStudy,
+            preferences: profileRow.preferences || SAMPLE_PROFILES[0].profile.preferences,
+            financial: profileRow.financial || SAMPLE_PROFILES[0].profile.financial,
+            standardizedTests: profileRow.standardized_tests || SAMPLE_PROFILES[0].profile.standardizedTests,
+            extracurriculars: profileRow.extracurriculars || [],
+            achievements: profileRow.achievements || [],
+          };
+
+          const applications: ApplicationItem[] = (appsRows || []).map((row: any) => ({
+            id: row.id,
+            universityId: row.university_id,
+            universityName: row.university_name,
+            country: row.country,
+            flag: row.flag,
+            major: row.major,
+            degree: row.degree,
+            stage: row.stage,
+            category: row.category,
+            deadline: row.deadline,
+            deadlineType: row.deadline_type,
+            progressPercent: row.progress_percent,
+            checklist: row.checklist || [],
+            notes: row.notes,
+            applicationFeeUSD: Number(row.application_fee_usd) || 0,
+            officialPortalUrl: row.official_portal_url,
+            scholarshipApplied: row.scholarship_applied,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+          }));
+
+          const vaultDocuments: VaultDocument[] = (docRows || []).map((row: any) => ({
+            id: row.id,
+            title: row.title,
+            type: row.type,
+            fileName: row.file_name,
+            uploadDate: row.created_at ? row.created_at.split('T')[0] : (row.upload_date || '2026-09-01'),
+            status: row.status,
+            fileSizeBytes: row.file_size_bytes,
+            storagePath: row.storage_path,
+            mimeType: row.mime_type,
+            notes: row.notes,
+            version: row.version || 1,
+            linkedUniversities: row.linked_universities || [],
+          }));
+
+          return {
+            account: {
+              id: profileRow.id,
+              fullName: profileRow.full_name,
+              email: profileRow.email,
+              tier: profileRow.tier || 'Explorer',
+              createdAt: profileRow.created_at ? profileRow.created_at.split('T')[0] : '2026-09-01',
+              lastLoginAt: new Date().toISOString(),
+            },
+            profile,
+            applications,
+            vaultDocuments,
+          };
+        }
+      } catch (err) {
+        console.warn('Error querying Supabase user data:', err);
+      }
+    }
+
+    // Local user storage lookup (isolated by user ID, containing zero passwords)
+    const localKey = `${LOCAL_USER_DATA_PREFIX}${userId}`;
+    const raw = localStorage.getItem(localKey);
+    if (raw) {
+      try {
+        return JSON.parse(raw) as UserSessionData;
+      } catch {
+        return null;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Save user data (profile, applications, vault documents) to Supabase or local sandbox
+   */
+  public static async saveUserData(
+    userId: string,
+    data: {
+      profile?: StudentProfile;
+      applications?: ApplicationItem[];
+      vaultDocuments?: VaultDocument[];
+      account?: Partial<UserAccount>;
+    }
+  ): Promise<void> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        if (data.profile || data.account) {
+          const profilePayload: any = {
+            id: userId,
+            updated_at: new Date().toISOString(),
+          };
+
+          if (data.account?.fullName) profilePayload.full_name = sanitizeText(data.account.fullName, 150);
+          if (data.account?.email) profilePayload.email = data.account.email.trim().toLowerCase();
+          if (data.account?.tier) profilePayload.tier = data.account.tier;
+
+          if (data.profile) {
+            const sanitizedProfile = sanitizeObject(data.profile);
+            profilePayload.personal = sanitizedProfile.personal;
+            profilePayload.academic = sanitizedProfile.academic;
+            profilePayload.intended_study = sanitizedProfile.intendedStudy;
+            profilePayload.preferences = sanitizedProfile.preferences;
+            profilePayload.financial = sanitizedProfile.financial;
+            profilePayload.standardized_tests = sanitizedProfile.standardizedTests;
+            profilePayload.extracurriculars = sanitizedProfile.extracurriculars;
+            profilePayload.achievements = sanitizedProfile.achievements;
+          }
+
+          await supabase.from('profiles').upsert(profilePayload);
+        }
+      } catch (err) {
+        console.warn('Failed to upsert Supabase profile:', err);
+      }
+    }
+
+    // Local fallback persistence
+    const localKey = `${LOCAL_USER_DATA_PREFIX}${userId}`;
+    const existing = await this.fetchUserData(userId);
+    const updated: UserSessionData = {
+      account: {
+        ...(existing?.account || {
+          id: userId,
+          fullName: 'Student',
+          email: '',
+          tier: 'Explorer',
+          createdAt: new Date().toISOString().split('T')[0],
+          lastLoginAt: new Date().toISOString(),
+        }),
+        ...(data.account || {}),
+        lastLoginAt: new Date().toISOString(),
+      },
+      profile: data.profile || existing?.profile || SAMPLE_PROFILES[0].profile,
+      applications: data.applications !== undefined ? data.applications : existing?.applications || [],
+      vaultDocuments: data.vaultDocuments !== undefined ? data.vaultDocuments : existing?.vaultDocuments || [],
+    };
+
+    localStorage.setItem(localKey, JSON.stringify(updated));
+
+    // Update session account state if matching active user
+    const current = this.getCachedUser();
+    if (current && current.id === userId) {
+      localStorage.setItem(SESSION_KEY, JSON.stringify(updated.account));
+    }
   }
 }

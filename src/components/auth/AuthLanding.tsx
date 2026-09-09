@@ -13,11 +13,13 @@ import {
   Mail, 
   User, 
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  KeyRound,
+  X
 } from 'lucide-react';
 
 export const AuthLanding: React.FC = () => {
-  const { signIn, signUp, loginAsDemo } = useApp();
+  const { signIn, signUp, resetPassword, loginAsDemo } = useApp();
 
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   
@@ -31,30 +33,72 @@ export const AuthLanding: React.FC = () => {
   const [signUpEmail, setSignUpEmail] = useState('');
   const [signUpPassword, setSignUpPassword] = useState('');
   const [signUpError, setSignUpError] = useState<string | null>(null);
+  const [verificationNotice, setVerificationNotice] = useState<string | null>(null);
+
+  // Forgot password modal state
+  const [isForgotModalOpen, setIsForgotModalOpen] = useState<boolean>(false);
+  const [resetEmail, setResetEmail] = useState<string>('');
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetSuccessMessage, setResetSuccessMessage] = useState<string | null>(null);
+  const [isResetting, setIsResetting] = useState<boolean>(false);
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  const handleSignInSubmit = (e: React.FormEvent) => {
+  const handleSignInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSignInError(null);
     setIsLoading(true);
 
-    const result = signIn(signInEmail, signInPassword);
-    setIsLoading(false);
-    if (!result.success) {
-      setSignInError(result.error || 'Failed to sign in. Please check your credentials.');
+    try {
+      const result = await signIn(signInEmail, signInPassword);
+      if (!result.success) {
+        setSignInError(result.error || 'Failed to sign in. Please check your credentials.');
+      }
+    } catch (err: any) {
+      setSignInError(err?.message || 'An unexpected error occurred during sign in.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleSignUpSubmit = (e: React.FormEvent) => {
+  const handleSignUpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSignUpError(null);
+    setVerificationNotice(null);
     setIsLoading(true);
 
-    const result = signUp(signUpName, signUpEmail, signUpPassword);
-    setIsLoading(false);
-    if (!result.success) {
-      setSignUpError(result.error || 'Failed to create account.');
+    try {
+      const result = await signUp(signUpName, signUpEmail, signUpPassword);
+      if (!result.success) {
+        setSignUpError(result.error || 'Failed to create account.');
+      } else if (result.requiresEmailVerification) {
+        setVerificationNotice(result.message || 'Account created! Please check your email to verify your address before signing in.');
+        setAuthMode('signin');
+      }
+    } catch (err: any) {
+      setSignUpError(err?.message || 'An unexpected error occurred during sign up.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetError(null);
+    setResetSuccessMessage(null);
+    setIsResetting(true);
+
+    try {
+      const result = await resetPassword(resetEmail);
+      if (result.success) {
+        setResetSuccessMessage(result.message || 'Password reset link sent! Check your inbox.');
+      } else {
+        setResetError(result.error || 'Failed to send reset link.');
+      }
+    } catch (err: any) {
+      setResetError(err?.message || 'An unexpected error occurred.');
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -87,7 +131,12 @@ export const AuthLanding: React.FC = () => {
               <span>Explore Demo Profile</span>
             </button>
             <button
-              onClick={() => setAuthMode(authMode === 'signin' ? 'signup' : 'signin')}
+              onClick={() => {
+                setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
+                setSignInError(null);
+                setSignUpError(null);
+                setVerificationNotice(null);
+              }}
               className="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition shadow-xs"
             >
               {authMode === 'signin' ? 'Create Account' : 'Sign In'}
@@ -119,17 +168,17 @@ export const AuthLanding: React.FC = () => {
             <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-xs space-y-1.5">
               <div className="flex items-center gap-2 font-bold text-xs text-slate-900">
                 <Building2 className="h-4 w-4 text-blue-600" />
-                <span>32+ Verified Global Universities</span>
+                <span>32+ Global Universities</span>
               </div>
               <p className="text-xs text-slate-500 leading-normal">
-                Real acceptance rates, tuition costs, and SAT/IELTS thresholds across US, Canada, UK, Germany, and Europe.
+                Acceptance rates, tuition costs, and SAT/IELTS thresholds across US, Canada, UK, Germany, and Europe.
               </p>
             </div>
 
             <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-xs space-y-1.5">
               <div className="flex items-center gap-2 font-bold text-xs text-slate-900">
                 <Award className="h-4 w-4 text-emerald-600" />
-                <span>20+ Full-Ride Scholarships</span>
+                <span>20+ Verified Scholarships</span>
               </div>
               <p className="text-xs text-slate-500 leading-normal">
                 Eligibility algorithms for DAAD, Fulbright, Chevening, Pearson, KAIST, and Texas In-State Waivers.
@@ -142,17 +191,17 @@ export const AuthLanding: React.FC = () => {
                 <span>12 Country ROI Matrices</span>
               </div>
               <p className="text-xs text-slate-500 leading-normal">
-                Compare post-study work visas (STEM OPT 3 yrs, PGWP 3 yrs), blocked accounts, and student minimum wages.
+                Compare post-study work visas (STEM OPT 3 yrs, PGWP 3 yrs), blocked accounts, and living expenses.
               </p>
             </div>
 
             <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-xs space-y-1.5">
               <div className="flex items-center gap-2 font-bold text-xs text-slate-900">
                 <ShieldCheck className="h-4 w-4 text-purple-600" />
-                <span>Live Gemini AI Counselor & SOP</span>
+                <span>AI Counselor & SOP Assistant</span>
               </div>
               <p className="text-xs text-slate-500 leading-normal">
-                24/7 strategic advisor chat, 5-paragraph SOP generator, and AI resume STAR bullet optimizer.
+                24/7 strategic advisor chat, 5-paragraph SOP generator, and resume STAR bullet optimizer.
               </p>
             </div>
           </div>
@@ -188,7 +237,7 @@ export const AuthLanding: React.FC = () => {
             <div className="grid grid-cols-2 bg-slate-100 p-1 rounded-2xl">
               <button
                 type="button"
-                onClick={() => { setAuthMode('signin'); setSignInError(null); }}
+                onClick={() => { setAuthMode('signin'); setSignInError(null); setVerificationNotice(null); }}
                 className={`py-2 text-xs font-bold rounded-xl transition ${
                   authMode === 'signin' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
                 }`}
@@ -197,7 +246,7 @@ export const AuthLanding: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => { setAuthMode('signup'); setSignUpError(null); }}
+                onClick={() => { setAuthMode('signup'); setSignUpError(null); setVerificationNotice(null); }}
                 className={`py-2 text-xs font-bold rounded-xl transition ${
                   authMode === 'signup' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-800'
                 }`}
@@ -205,6 +254,17 @@ export const AuthLanding: React.FC = () => {
                 Create Account
               </button>
             </div>
+
+            {/* Email Verification Banner */}
+            {verificationNotice && (
+              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-start gap-2.5">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold">Check Your Email</p>
+                  <p className="text-emerald-700 mt-0.5">{verificationNotice}</p>
+                </div>
+              </div>
+            )}
 
             {/* SIGN IN FORM */}
             {authMode === 'signin' ? (
@@ -238,7 +298,19 @@ export const AuthLanding: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Password</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-slate-700">Password</label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setResetEmail(signInEmail);
+                          setIsForgotModalOpen(true);
+                        }}
+                        className="text-[11px] font-semibold text-blue-600 hover:text-blue-700"
+                      >
+                        Forgot password?
+                      </button>
+                    </div>
                     <div className="relative">
                       <Lock className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
                       <input
@@ -256,17 +328,11 @@ export const AuthLanding: React.FC = () => {
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center justify-center gap-2 shadow-xs"
+                  className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center justify-center gap-2 shadow-xs disabled:opacity-60"
                 >
                   <span>{isLoading ? 'Signing in...' : 'Sign In to Dashboard'}</span>
                   <ArrowRight className="h-4 w-4" />
                 </button>
-
-                <div className="text-center pt-1">
-                  <p className="text-xs text-slate-500">
-                    Default demo password: <code className="bg-slate-100 px-1 py-0.5 rounded text-blue-600 font-mono">demo123</code>
-                  </p>
-                </div>
               </form>
             ) : (
               
@@ -324,7 +390,7 @@ export const AuthLanding: React.FC = () => {
                         required
                         value={signUpPassword}
                         onChange={(e) => setSignUpPassword(e.target.value)}
-                        placeholder="Minimum 4 characters"
+                        placeholder="Minimum 6 characters"
                         className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-200 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                       />
                     </div>
@@ -334,7 +400,7 @@ export const AuthLanding: React.FC = () => {
                 <button
                   type="submit"
                   disabled={isLoading}
-                  className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center justify-center gap-2 shadow-xs"
+                  className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center justify-center gap-2 shadow-xs disabled:opacity-60"
                 >
                   <CheckCircle2 className="h-4 w-4" />
                   <span>{isLoading ? 'Creating account...' : 'Create Account & Start Profile'}</span>
@@ -346,6 +412,90 @@ export const AuthLanding: React.FC = () => {
         </div>
 
       </main>
+
+      {/* Forgot Password Modal */}
+      {isForgotModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 relative">
+            <button
+              onClick={() => {
+                setIsForgotModalOpen(false);
+                setResetError(null);
+                setResetSuccessMessage(null);
+              }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="flex items-center gap-2.5 mb-3">
+              <div className="h-9 w-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                <KeyRound className="h-5 w-5" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900">Reset Password</h3>
+            </div>
+
+            <p className="text-xs text-slate-600 mb-4">
+              Enter your account email address and we will send you a secure link to reset your password.
+            </p>
+
+            {resetSuccessMessage ? (
+              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-start gap-2 mb-4">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold">Success</p>
+                  <p className="text-emerald-700 mt-0.5">{resetSuccessMessage}</p>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
+                {resetError && (
+                  <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs text-red-800 flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
+                    <span>{resetError}</span>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Email Address</label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                    <input
+                      type="email"
+                      required
+                      value={resetEmail}
+                      onChange={(e) => setResetEmail(e.target.value)}
+                      placeholder="e.g. rahim@example.com"
+                      className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-200 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsForgotModalOpen(false);
+                      setResetError(null);
+                      setResetSuccessMessage(null);
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100 transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isResetting}
+                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition disabled:opacity-60"
+                  >
+                    {isResetting ? 'Sending link...' : 'Send Reset Link'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-500">

@@ -137,39 +137,119 @@ export const ProfileWizard: React.FC = () => {
     setTimeout(() => setSavedAlert(false), 2000);
   };
 
+  // Step 26: Progressive Onboarding Completeness Meter
+  const calculateCompleteness = () => {
+    let score = 0;
+    if (profile.personal.fullName && profile.personal.nationality) score += 15;
+    if (profile.academic.qualification && profile.academic.institution && profile.academic.gpa) score += 25;
+    if (profile.intendedStudy.major && profile.intendedStudy.degreeLevel && profile.preferences.countries.length > 0) score += 20;
+    if (profile.financial.maxYearlyBudgetUSD !== undefined) score += 15;
+    if (profile.standardizedTests.englishTest.type || profile.standardizedTests.standardizedTest.type) score += 15;
+    if (profile.extracurriculars.length > 0) score += 10;
+    return Math.min(100, score);
+  };
+
+  const completeness = calculateCompleteness();
+
+  const stepMatchingTips: Record<number, { title: string; explanation: string }> = {
+    1: {
+      title: 'Why personal info improves matching',
+      explanation: 'Nationality and residency determine international tuition categories, post-study work visa rights, and bilateral government scholarship eligibility.'
+    },
+    2: {
+      title: 'Why academic history improves matching',
+      explanation: 'Standardized GPA and curriculum rigor prevent applying to programs where you miss hard institutional cutoffs, preserving your budget for high-odds schools.'
+    },
+    3: {
+      title: 'Why degree & country preferences improve matching',
+      explanation: 'Selecting target intake and country preferences aligns recommendations with open admission cycles and high-demand program quotas.'
+    },
+    4: {
+      title: 'Why financial budgeting improves matching',
+      explanation: 'Setting realistic annual ceilings filters out universities that lack sufficient financial aid or institutional scholarships to bridge the tuition gap.'
+    },
+    5: {
+      title: 'Why test scores improve matching',
+      explanation: 'English proficiency scores satisfy immigration compliance, while SAT/GRE scores separate competitive reach schools from target matches.'
+    },
+    6: {
+      title: 'Why extracurriculars improve matching',
+      explanation: 'Top-tier holistic universities (US T50, UK Russell Group, Canada U15) evaluate leadership, project impact, and intellectual curiosity alongside GPA.'
+    }
+  };
+
+  const currentTip = stepMatchingTips[currentStep];
+
   return (
     <div className="space-y-6 pb-12">
       
-      {/* Header with Live Score Banner */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl bg-white border border-slate-200 shadow-xs">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-            <span>Student Profile Builder</span>
-            {savedAlert && (
-              <span className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full font-semibold animate-pulse">
-                ✓ Auto-saved
-              </span>
-            )}
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Complete your full academic, financial, test, and extracurricular profile to generate 100% accurate university & scholarship matches.
-          </p>
+      {/* Header with Live Score & Completeness Meter (Step 26) */}
+      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+              <span>Student Profile Builder</span>
+              {savedAlert && (
+                <span className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full font-semibold animate-pulse">
+                  ✓ Auto-saved
+                </span>
+              )}
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Complete your academic, financial, test, and extracurricular profile to evaluate your candidacy against published requirements and scholarship criteria.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <span className="text-[10px] uppercase font-bold text-slate-400">Current AI Score</span>
+              <div className="text-xl font-black text-emerald-600">{report.overallScore}/100</div>
+            </div>
+            <button
+              onClick={() => setActiveTab('assessment')}
+              className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>View Full Assessment</span>
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="text-right">
-            <span className="text-[10px] uppercase font-bold text-slate-400">Current AI Score</span>
-            <div className="text-xl font-black text-emerald-600">{report.overallScore}/100</div>
+        {/* Completeness Meter Bar */}
+        <div className="pt-2 border-t border-slate-100 space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+              <span>Profile Completeness: <strong className="text-blue-700">{completeness}%</strong></span>
+            </span>
+            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+              completeness >= 80 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+            }`}>
+              {completeness >= 80 ? 'High-Precision Matching Ready' : 'Fill Remaining Sections for Sharper Matching'}
+            </span>
           </div>
-          <button
-            onClick={() => setActiveTab('assessment')}
-            className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>View Full Assessment</span>
-          </button>
+
+          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+            <div 
+              className={`h-full rounded-full transition-all duration-500 ${
+                completeness >= 80 ? 'bg-emerald-500' : completeness >= 50 ? 'bg-blue-600' : 'bg-amber-500'
+              }`}
+              style={{ width: `${completeness}%` }}
+            />
+          </div>
         </div>
       </div>
+
+      {/* Contextual "Why This Improves Matching" Tip Banner (Step 26) */}
+      {currentTip && (
+        <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200/80 text-xs text-blue-900 flex items-start gap-2.5">
+          <Sparkles className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+          <div>
+            <span className="font-bold">{currentTip.title}: </span>
+            <span className="text-slate-600 text-[11px]">{currentTip.explanation}</span>
+          </div>
+        </div>
+      )}
 
       {/* Step Navigation Bar */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">

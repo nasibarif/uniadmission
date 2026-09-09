@@ -7,15 +7,29 @@ import {
   Copy, 
   Check, 
   RefreshCw, 
-  CheckCircle2,
-  Download,
-  Award,
-  AlertCircle,
-  FileText
+  CheckCircle2, 
+  Download, 
+  Award, 
+  AlertCircle, 
+  FileText,
+  History,
+  RotateCcw,
+  Trash2,
+  X
 } from 'lucide-react';
 
+export interface SopRevision {
+  id: string;
+  timestamp: string;
+  universityName: string;
+  major: string;
+  tone: string;
+  sections: SopSection[];
+  wordCount: number;
+}
+
 export const SopAssistant: React.FC = () => {
-  const { profile, universities } = useApp();
+  const { profile, universities, userTier } = useApp();
 
   const [selectedUniName, setSelectedUniName] = useState<string>(universities[0]?.name || 'Purdue University');
   const [targetMajor, setTargetMajor] = useState<string>(profile.intendedStudy.major);
@@ -30,6 +44,17 @@ export const SopAssistant: React.FC = () => {
   const [isCritiquing, setIsCritiquing] = useState<boolean>(false);
   const [critique, setCritique] = useState<SopCritique | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
+  const [isRevisionModalOpen, setIsRevisionModalOpen] = useState<boolean>(false);
+  const [revisionSavedToast, setRevisionSavedToast] = useState<boolean>(false);
+
+  // Step 30: Revision Tracking & Version History
+  const [revisions, setRevisions] = useState<SopRevision[]>(() => {
+    const saved = localStorage.getItem('uniadmission_sop_revisions');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { /* ignore */ }
+    }
+    return [];
+  });
 
   // Default initial structured SOP sections
   const [sections, setSections] = useState<SopSection[]>(() => {
@@ -45,6 +70,40 @@ export const SopAssistant: React.FC = () => {
     });
   });
 
+  const saveRevisionSnapshot = (customSections?: SopSection[]) => {
+    const secToSave = customSections || sections;
+    const count = secToSave.map(s => s.content).join(' ').split(/\s+/).filter(Boolean).length;
+    const newRevision: SopRevision = {
+      id: `rev-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }),
+      universityName: selectedUniName,
+      major: targetMajor,
+      tone: selectedTone,
+      sections: JSON.parse(JSON.stringify(secToSave)),
+      wordCount: count
+    };
+    const updated = [newRevision, ...revisions.slice(0, 19)]; // Keep latest 20
+    setRevisions(updated);
+    localStorage.setItem('uniadmission_sop_revisions', JSON.stringify(updated));
+    setRevisionSavedToast(true);
+    setTimeout(() => setRevisionSavedToast(false), 2500);
+  };
+
+  const restoreRevision = (rev: SopRevision) => {
+    setSections(rev.sections);
+    setSelectedUniName(rev.universityName);
+    setTargetMajor(rev.major);
+    setSelectedTone(rev.tone as any);
+    setIsRevisionModalOpen(false);
+  };
+
+  const deleteRevision = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = revisions.filter(r => r.id !== id);
+    setRevisions(updated);
+    localStorage.setItem('uniadmission_sop_revisions', JSON.stringify(updated));
+  };
+
   const handleGenerate = async () => {
     setIsGenerating(true);
     setCritique(null);
@@ -58,8 +117,10 @@ export const SopAssistant: React.FC = () => {
         reasonsForChoosing,
         tone: selectedTone,
         profile
-      });
+      }, userTier);
       setSections(generated);
+      // Auto-save generated version as a revision snapshot
+      saveRevisionSnapshot(generated);
     } catch (err) {
       console.error('SOP generation failed:', err);
     } finally {
@@ -96,7 +157,7 @@ export const SopAssistant: React.FC = () => {
   const handleRunCritique = async () => {
     setIsCritiquing(true);
     const fullText = getFullSopText();
-    const result = await GeminiService.critiqueSop(fullText, selectedUniName, targetMajor);
+    const result = await GeminiService.critiqueSop(fullText, selectedUniName, targetMajor, userTier);
     setCritique(result);
     setIsCritiquing(false);
   };
@@ -121,31 +182,49 @@ export const SopAssistant: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0 relative z-10">
+        <div className="flex flex-wrap items-center gap-2 shrink-0 relative z-10">
+          <button
+            onClick={() => setIsRevisionModalOpen(true)}
+            className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+            title="View revision history"
+          >
+            <History className="h-4 w-4 text-blue-600" />
+            <span>Revisions ({revisions.length})</span>
+          </button>
+
+          <button
+            onClick={() => saveRevisionSnapshot()}
+            className="px-3 py-2 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+            title="Save manual revision snapshot"
+          >
+            <RotateCcw className="h-3.5 w-3.5 text-blue-600" />
+            <span>{revisionSavedToast ? 'Snapshot Saved!' : 'Save Snapshot'}</span>
+          </button>
+
           <button
             onClick={handleRunCritique}
             disabled={isCritiquing}
             className="px-3.5 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold transition flex items-center gap-1.5 shadow-xs disabled:opacity-50"
           >
             <Award className={`h-4 w-4 ${isCritiquing ? 'animate-spin' : ''}`} />
-            <span>{isCritiquing ? 'Analyzing...' : 'AI Critique & Score'}</span>
+            <span>{isCritiquing ? 'Analyzing...' : 'AI Critique'}</span>
           </button>
 
           <button
             onClick={handleDownloadMarkdown}
-            className="px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+            className="px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
             title="Download formatted markdown"
           >
             <Download className="h-4 w-4 text-slate-500" />
-            <span>Export .MD</span>
+            <span className="hidden sm:inline">Export .MD</span>
           </button>
 
           <button
             onClick={handleCopy}
-            className="px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+            className="px-3.5 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
           >
             {copied ? <Check className="h-4 w-4 text-white" /> : <Copy className="h-4 w-4" />}
-            <span>{copied ? 'Copied Full SOP!' : 'Copy Draft'}</span>
+            <span>{copied ? 'Copied!' : 'Copy Draft'}</span>
           </button>
         </div>
       </div>
@@ -359,6 +438,89 @@ export const SopAssistant: React.FC = () => {
         </div>
 
       </div>
+
+      {/* Revisions History Modal (Step 30) */}
+      {isRevisionModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 space-y-4 shadow-xl border border-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <History className="h-5 w-5 text-blue-600" />
+                <h3 className="text-base font-bold text-slate-900">
+                  SOP Revision History & Draft Snapshots
+                </h3>
+              </div>
+              <button 
+                onClick={() => setIsRevisionModalOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500">
+              Each AI generation and manual snapshot is tracked with word count and timestamp. Restore any previous draft at any time.
+            </p>
+
+            {revisions.length === 0 ? (
+              <div className="p-8 text-center space-y-2 bg-slate-50 rounded-xl border border-slate-100">
+                <FileText className="h-8 w-8 text-slate-400 mx-auto" />
+                <p className="text-xs font-semibold text-slate-600">No revisions saved yet</p>
+                <p className="text-[11px] text-slate-400">Click "Save Snapshot" or generate an SOP to record a version.</p>
+              </div>
+            ) : (
+              <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 space-y-1">
+                {revisions.map((rev) => (
+                  <div key={rev.id} className="p-3 rounded-xl hover:bg-slate-50 transition flex items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-900">{rev.universityName}</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 font-semibold border border-blue-100">
+                          {rev.tone}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                        <span>{rev.timestamp}</span>
+                        <span>•</span>
+                        <span>{rev.wordCount} words</span>
+                        <span>•</span>
+                        <span>{rev.major}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => restoreRevision(rev)}
+                        className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center gap-1 shadow-xs"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        <span>Restore</span>
+                      </button>
+                      <button
+                        onClick={(e) => deleteRevision(rev.id, e)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition"
+                        title="Delete snapshot"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="pt-3 border-t border-slate-100 flex justify-between items-center text-xs">
+              <span className="text-slate-400 text-[11px]">{revisions.length} total snapshots stored</span>
+              <button
+                onClick={() => setIsRevisionModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

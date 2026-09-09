@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 
 export const CvBuilder: React.FC = () => {
-  const { profile } = useApp();
+  const { profile, userTier } = useApp();
   const [copied, setCopied] = useState<boolean>(false);
   const [activeEnhanceId, setActiveEnhanceId] = useState<string | null>(null);
   const [rawBulletInput, setRawBulletInput] = useState<string>('');
@@ -71,7 +71,7 @@ ${profile.achievements.map(ach => `### ${ach.title} (${ach.year})
     if (!rawBulletInput.trim()) return;
     setIsEnhancing(true);
     try {
-      const result = await GeminiService.enhanceCvBullet(rawBulletInput, roleInput || 'Participant', profile.intendedStudy.major);
+      const result = await GeminiService.enhanceCvBullet(rawBulletInput, roleInput || 'Participant', profile.intendedStudy.major, userTier);
       setStarResult(result);
     } catch (err) {
       console.error(err);

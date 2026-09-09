@@ -1,34 +1,113 @@
 import React from 'react';
 import { useApp } from '../../context/AppContext';
+import { ApplicationReadinessEngine } from '../../services/applicationReadinessEngine';
 import { 
   Sparkles, 
   Building2, 
   Award, 
-  TrendingUp, 
   ArrowRight, 
   CheckCircle2, 
   Calendar, 
   ShieldCheck, 
   Bot,
-  KanbanSquare
+  KanbanSquare,
+  Clock,
+  Target,
+  FileText,
+  FolderLock
 } from 'lucide-react';
 
 export const DashboardOverview: React.FC = () => {
   const { 
     profile, 
-    report, 
     universities, 
     scholarships, 
     applications, 
+    vaultDocuments,
     setActiveTab, 
     addToApplications,
     setSelectedUniversityForModal
   } = useApp();
 
-  const reachUnis = universities.filter(u => u.category === 'Reach');
+  const reachUnis = universities.filter(u => u.category === 'Reach' || u.category === 'High Reach');
   const targetUnis = universities.filter(u => u.category === 'Target');
-  const safeUnis = universities.filter(u => u.category === 'Safe');
+  const likelyUnis = universities.filter(u => u.category === 'Likely' || (u.category as string) === 'Safe');
   const eligibleSchols = scholarships.filter(s => s.eligibilityStatus === 'Likely Eligible' || s.eligibilityStatus === 'Competitive');
+
+  // Application Readiness & Deadline Intelligence (Steps 21, 22, 24)
+  const appReadinessList = applications.map(app => ({
+    app,
+    readiness: ApplicationReadinessEngine.calculateReadiness(app, vaultDocuments || []),
+    deadlineInfo: ApplicationReadinessEngine.calculateDeadlineIntelligence(app.deadline)
+  }));
+
+  // Overall readiness average across active applications
+  const overallReadiness = appReadinessList.length > 0 
+    ? Math.round(appReadinessList.reduce((acc, curr) => acc + curr.readiness.score, 0) / appReadinessList.length)
+    : 35; // baseline onboarding readiness
+
+  // Urgency Radar counts
+  const urgentCount = appReadinessList.filter(a => a.deadlineInfo.urgencyBand === 'Urgent' || a.deadlineInfo.isOverdue).length;
+  const approachingCount = appReadinessList.filter(a => a.deadlineInfo.urgencyBand === 'Approaching').length;
+  const upcomingCount = appReadinessList.filter(a => a.deadlineInfo.urgencyBand === 'Upcoming' || a.deadlineInfo.urgencyBand === 'Future').length;
+
+  // Compute Today's Highest Impact Action (Step 24)
+  const computeHighestImpactAction = () => {
+    if (applications.length === 0) {
+      return {
+        title: 'Add Your First Target & Reach Universities',
+        description: 'You haven\'t added any universities to your Application Command Center yet. Selecting your initial portfolio establishes deadlines and required document checklists.',
+        impact: '+30% Readiness Boost',
+        targetTab: 'universities',
+        ctaText: 'Browse Matched Universities',
+        icon: Building2,
+        urgency: 'Medium'
+      };
+    }
+
+    // Check for urgent deadline apps first
+    const urgentApp = [...appReadinessList].sort((a, b) => a.deadlineInfo.daysRemaining - b.deadlineInfo.daysRemaining)[0];
+    
+    if (urgentApp && urgentApp.readiness.missingBlockers.length > 0) {
+      return {
+        title: `Resolve Blocker: ${urgentApp.app.universityName}`,
+        description: `${urgentApp.readiness.missingBlockers[0]} is required before submission. Deadline in ${urgentApp.deadlineInfo.daysRemaining} days (${urgentApp.deadlineInfo.formattedDeadline}).`,
+        impact: '+25% Application Readiness',
+        targetTab: 'applications',
+        ctaText: 'Open Application Checklist',
+        icon: Target,
+        urgency: urgentApp.deadlineInfo.daysRemaining <= 14 ? 'High' : 'Medium'
+      };
+    }
+
+    // Check Vault documents
+    const hasTranscript = (vaultDocuments || []).some(d => d.type === 'Academic Transcript');
+    if (!hasTranscript) {
+      return {
+        title: 'Upload Official Academic Transcript to Vault',
+        description: 'Universities require verified transcripts. Storing your transcript in the Document Vault allows instant attachment across all applications.',
+        impact: '+20% Application Readiness',
+        targetTab: 'vault',
+        ctaText: 'Open Document Vault',
+        icon: FolderLock,
+        urgency: 'Medium'
+      };
+    }
+
+    // Default: Draft SOP
+    return {
+      title: `Draft Statement of Purpose for ${applications[0]?.universityName || 'Target University'}`,
+      description: 'Use the AI SOP Studio to synthesize your academic accomplishments, leadership experiences, and institutional alignment into a competitive essay.',
+      impact: '+15% Committee Score',
+      targetTab: 'sop',
+      ctaText: 'Launch SOP Studio',
+      icon: FileText,
+      urgency: 'Medium'
+    };
+  };
+
+  const highestImpactAction = computeHighestImpactAction();
+  const ActionIcon = highestImpactAction.icon;
 
   return (
     <div className="space-y-6 pb-12">
@@ -40,7 +119,7 @@ export const DashboardOverview: React.FC = () => {
         <div className="relative z-10 max-w-3xl">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 border border-blue-100 text-blue-700 text-xs font-semibold mb-3">
             <Sparkles className="h-3.5 w-3.5 text-blue-600" />
-            <span>AI Admission Intelligence Active</span>
+            <span>Admission Command Center Active</span>
           </div>
 
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
@@ -77,38 +156,120 @@ export const DashboardOverview: React.FC = () => {
         </div>
       </div>
 
-      {/* Metric Cards Grid */}
+      {/* TODAY'S HIGHEST IMPACT ACTION CARD (Step 24) */}
+      <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white shadow-sm border border-blue-800/40 relative overflow-hidden">
+        <div className="absolute right-0 bottom-0 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-5">
+          <div className="space-y-2 max-w-2xl">
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-400 text-slate-950 flex items-center gap-1">
+                <Target className="h-3 w-3" />
+                <span>Today's Highest Impact Action</span>
+              </span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/10 text-blue-200 border border-white/10">
+                {highestImpactAction.impact}
+              </span>
+            </div>
+
+            <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+              <ActionIcon className="h-5 w-5 text-blue-400 shrink-0" />
+              <span>{highestImpactAction.title}</span>
+            </h2>
+
+            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+              {highestImpactAction.description}
+            </p>
+          </div>
+
+          <div className="shrink-0">
+            <button
+              onClick={() => setActiveTab(highestImpactAction.targetTab)}
+              className="w-full sm:w-auto px-5 py-3 rounded-xl bg-blue-500 hover:bg-blue-400 text-white font-bold text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-blue-500/25"
+            >
+              <span>{highestImpactAction.ctaText}</span>
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Metric Cards Grid with Readiness Meter & Urgency Radar (Step 24) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         
-        {/* Score Card */}
+        {/* Card 1: Overall Application Readiness Meter */}
         <div 
-          onClick={() => setActiveTab('assessment')}
+          onClick={() => setActiveTab('applications')}
           className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:border-slate-300 transition cursor-pointer group"
         >
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              Admission Strength
+              Application Readiness
             </span>
-            <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
-              <TrendingUp className="h-4 w-4" />
+            <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+              <Target className="h-4 w-4" />
             </div>
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-black text-slate-900">
-              {report.overallScore}
+              {overallReadiness}%
             </span>
-            <span className="text-xs font-semibold text-slate-400">/ 100</span>
+            <span className="text-xs font-semibold text-slate-400">Readiness</span>
           </div>
-          <p className="text-xs font-semibold text-emerald-600 mt-1">
-            {report.scoreTier}
+
+          {/* Readiness Meter Bar */}
+          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mt-2">
+            <div 
+              className={`h-full rounded-full transition-all duration-500 ${
+                overallReadiness >= 75 ? 'bg-emerald-500' : overallReadiness >= 50 ? 'bg-blue-600' : 'bg-amber-500'
+              }`}
+              style={{ width: `${overallReadiness}%` }}
+            />
+          </div>
+
+          <p className="text-[11px] font-semibold text-slate-500 mt-2">
+            {overallReadiness >= 75 ? '🟢 Ready for final submission review' : overallReadiness >= 50 ? '🔵 Core requirements in progress' : '🟡 Prerequisite blockers pending'}
           </p>
           <div className="mt-3 flex items-center text-xs text-blue-600 font-semibold group-hover:translate-x-1 transition-transform">
-            <span>View detailed breakdown</span>
+            <span>View readiness checklist</span>
             <ArrowRight className="h-3 w-3 ml-1" />
           </div>
         </div>
 
-        {/* Reach / Target / Safe Portfolio Card */}
+        {/* Card 2: Deadlines Urgency Radar (Step 24) */}
+        <div 
+          onClick={() => setActiveTab('applications')}
+          className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:border-slate-300 transition cursor-pointer group"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              Deadlines Urgency Radar
+            </span>
+            <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
+              <Clock className="h-4 w-4" />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`px-2 py-0.5 rounded text-xs font-black ${urgentCount > 0 ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'}`}>
+              {urgentCount} Urgent
+            </span>
+            <span className="px-2 py-0.5 rounded text-xs font-bold bg-amber-50 text-amber-700">
+              {approachingCount} Next 45d
+            </span>
+            <span className="px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-600">
+              {upcomingCount} Later
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-500 mt-3">
+            {urgentCount > 0 ? 'Critical deadlines closing within 14 days' : 'All application deadlines within safe lead time'}
+          </p>
+          <div className="mt-3 flex items-center text-xs text-blue-600 font-semibold group-hover:translate-x-1 transition-transform">
+            <span>Inspect deadline calendar</span>
+            <ArrowRight className="h-3 w-3 ml-1" />
+          </div>
+        </div>
+
+        {/* Card 3: Reach / Target / Likely Portfolio */}
         <div 
           onClick={() => setActiveTab('universities')}
           className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:border-slate-300 transition cursor-pointer group"
@@ -133,12 +294,12 @@ export const DashboardOverview: React.FC = () => {
             </div>
             <span className="text-slate-300 font-bold">•</span>
             <div className="flex flex-col">
-              <span className="text-lg font-bold text-emerald-700">{safeUnis.length}</span>
-              <span className="text-[10px] text-slate-400 font-bold uppercase">Safe</span>
+              <span className="text-lg font-bold text-emerald-700">{likelyUnis.length}</span>
+              <span className="text-[10px] text-slate-400 font-bold uppercase">Likely</span>
             </div>
           </div>
           <p className="text-[11px] text-slate-500 mt-2">
-            Balanced 3-tier strategy ready
+            Balanced 3-tier portfolio positioning
           </p>
           <div className="mt-2 flex items-center text-xs text-blue-600 font-semibold group-hover:translate-x-1 transition-transform">
             <span>Explore universities</span>
@@ -146,7 +307,7 @@ export const DashboardOverview: React.FC = () => {
           </div>
         </div>
 
-        {/* Scholarships Opportunity */}
+        {/* Card 4: Scholarships Opportunity */}
         <div 
           onClick={() => setActiveTab('scholarships')}
           className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs hover:border-slate-300 transition cursor-pointer group"
@@ -155,12 +316,12 @@ export const DashboardOverview: React.FC = () => {
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
               Scholarship Matches
             </span>
-            <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
+            <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
               <Award className="h-4 w-4" />
             </div>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-black text-amber-600">
+            <span className="text-3xl font-black text-emerald-600">
               {eligibleSchols.length}
             </span>
             <span className="text-xs font-semibold text-slate-400">Eligible Awards</span>

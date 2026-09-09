@@ -1,21 +1,29 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import type { Scholarship } from '../../types';
 import { 
   Search, 
   ExternalLink, 
   CheckCircle2, 
   AlertCircle, 
   Calendar, 
-  Sparkles
+  Sparkles,
+  ShieldCheck,
+  ListChecks,
+  XCircle,
+  AlertTriangle,
+  Info,
+  X
 } from 'lucide-react';
 
 export const ScholarshipFinder: React.FC = () => {
   const { scholarships, profile } = useApp();
   const [coverageFilter, setCoverageFilter] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [auditScholarship, setAuditScholarship] = useState<Scholarship | null>(null);
 
   const fullRideCount = scholarships.filter(s => s.coverageType.includes('Full Ride')).length;
-  const eligibleCount = scholarships.filter(s => s.eligibilityStatus === 'Likely Eligible').length;
+  const eligibleCount = scholarships.filter(s => s.eligibilityStatus === 'Likely Eligible' || s.eligibilityStatus === 'Eligible').length;
 
   const filtered = scholarships.filter(sch => {
     if (coverageFilter !== 'All') {
@@ -41,13 +49,13 @@ export const ScholarshipFinder: React.FC = () => {
         <div className="space-y-2 max-w-xl relative z-10">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold">
             <Sparkles className="h-3.5 w-3.5 text-amber-600" />
-            <span>Scholarship Discovery & Eligibility Engine</span>
+            <span>Scholarship Discovery & Explainable Eligibility Engine</span>
           </div>
           <h2 className="text-2xl font-bold text-slate-900">
             Matched Scholarship Opportunities
           </h2>
           <p className="text-xs text-slate-600 leading-relaxed">
-            Evaluated against your academic score ({profile.academic.rawGpaText}), test results, intended major ({profile.intendedStudy.major}), and nationality.
+            Evaluated against your academic score ({profile.academic.rawGpaText}), test results, intended major ({profile.intendedStudy.major}), and nationality ({profile.personal.nationality}).
           </p>
         </div>
 
@@ -98,9 +106,9 @@ export const ScholarshipFinder: React.FC = () => {
       <div className="space-y-4">
         {filtered.map((sch) => {
           const statusBadge = 
-            sch.eligibilityStatus === 'Likely Eligible'
+            sch.eligibilityStatus === 'Likely Eligible' || sch.eligibilityStatus === 'Eligible'
               ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-              : sch.eligibilityStatus === 'Competitive'
+              : sch.eligibilityStatus === 'Competitive' || sch.eligibilityStatus === 'Potentially Eligible'
               ? 'bg-blue-50 text-blue-700 border-blue-200'
               : 'bg-amber-50 text-amber-700 border-amber-200';
 
@@ -127,6 +135,29 @@ export const ScholarshipFinder: React.FC = () => {
                     <span className={`px-2.5 py-0.5 text-[10px] font-bold uppercase rounded-md border ${statusBadge}`}>
                       {sch.eligibilityStatus}
                     </span>
+
+                    {/* Step 11: Verification provenance */}
+                    {sch.verificationStatus && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <ShieldCheck className="h-3 w-3 text-emerald-600" />
+                        <span>Verified Official</span>
+                        {sch.lastVerifiedAt && (
+                          <span className="text-slate-400">({new Date(sch.lastVerifiedAt).toLocaleDateString()})</span>
+                        )}
+                      </span>
+                    )}
+
+                    {sch.requiresNomination && (
+                      <span className="px-2 py-0.5 text-[10px] font-semibold rounded-md bg-purple-50 text-purple-700 border border-purple-200">
+                        Nomination Required
+                      </span>
+                    )}
+
+                    {sch.requiresSeparateApplication && (
+                      <span className="px-2 py-0.5 text-[10px] font-semibold rounded-md bg-blue-50 text-blue-700 border border-blue-200">
+                        Separate Application
+                      </span>
+                    )}
                   </div>
 
                   <p className="text-xs text-slate-500">
@@ -140,9 +171,15 @@ export const ScholarshipFinder: React.FC = () => {
                   <p className="text-xs text-slate-600 leading-relaxed">
                     {sch.description}
                   </p>
+
+                  {sch.renewalConditions && (
+                    <div className="text-[11px] text-slate-600 bg-slate-50 p-2 rounded-xl border border-slate-200/70">
+                      <strong className="text-slate-700">Renewal Terms:</strong> {sch.renewalConditions}
+                    </div>
+                  )}
                 </div>
 
-                {/* Right side deadline & link */}
+                {/* Right side deadline, audit trigger & link */}
                 <div className="flex flex-col sm:flex-row md:flex-col items-start md:items-end justify-between gap-3 shrink-0">
                   <div className="text-left md:text-right">
                     <span className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1 md:justify-end">
@@ -157,15 +194,27 @@ export const ScholarshipFinder: React.FC = () => {
                     </span>
                   </div>
 
-                  <a
-                    href={sch.applicationUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
-                  >
-                    <span>Apply / Official Guide</span>
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </a>
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    {/* Step 13: View Detailed Eligibility Audit Modal Trigger */}
+                    <button
+                      onClick={() => setAuditScholarship(sch)}
+                      className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition flex items-center gap-1.5 border border-slate-200"
+                      title="View criterion-by-criterion eligibility audit"
+                    >
+                      <ListChecks className="h-3.5 w-3.5 text-blue-600" />
+                      <span>View Audit</span>
+                    </button>
+
+                    <a
+                      href={sch.applicationUrl || sch.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-xs"
+                    >
+                      <span>Apply / Portal</span>
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  </div>
                 </div>
 
               </div>
@@ -201,6 +250,143 @@ export const ScholarshipFinder: React.FC = () => {
           );
         })}
       </div>
+
+      {/* Step 13: Explainable Criteria Audit Modal */}
+      {auditScholarship && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-xl w-full border border-slate-200 shadow-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            
+            {/* Modal Header */}
+            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">{auditScholarship.flag}</span>
+                  <h3 className="font-bold text-slate-900 text-base">
+                    {auditScholarship.name}
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Criterion-by-criterion eligibility audit for <strong>{profile.personal.fullName}</strong>
+                </p>
+              </div>
+              <button
+                onClick={() => setAuditScholarship(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Overview Summary */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 p-3 rounded-xl bg-slate-50 border border-slate-200">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400">Eligibility Status</span>
+                <div className="text-xs font-bold text-emerald-700 mt-0.5">{auditScholarship.eligibilityStatus}</div>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400">Match Score</span>
+                <div className="text-xs font-bold text-blue-600 mt-0.5">{auditScholarship.matchScore || 80}/100</div>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400">Competition</span>
+                <div className="text-xs font-bold text-slate-700 mt-0.5">{auditScholarship.competitionLevel}</div>
+              </div>
+            </div>
+
+            {/* Criteria Audit Breakdown (Step 13) */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                <ListChecks className="h-4 w-4 text-blue-600" />
+                <span>Eligibility Criteria Evaluation ({auditScholarship.criteriaAudit?.length || 0} checks)</span>
+              </h4>
+
+              <div className="space-y-2">
+                {auditScholarship.criteriaAudit && auditScholarship.criteriaAudit.length > 0 ? (
+                  auditScholarship.criteriaAudit.map((audit, idx) => {
+                    let icon = <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />;
+                    let bg = 'bg-emerald-50/50 border-emerald-200 text-slate-700';
+                    let badge = 'bg-emerald-100 text-emerald-800';
+
+                    if (audit.status === 'unmet') {
+                      icon = <XCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />;
+                      bg = 'bg-rose-50/50 border-rose-200 text-slate-700';
+                      badge = 'bg-rose-100 text-rose-800';
+                    } else if (audit.status === 'warning') {
+                      icon = <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />;
+                      bg = 'bg-amber-50/50 border-amber-200 text-slate-700';
+                      badge = 'bg-amber-100 text-amber-800';
+                    } else if (audit.status === 'info') {
+                      icon = <Info className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />;
+                      bg = 'bg-blue-50/40 border-blue-200 text-slate-700';
+                      badge = 'bg-blue-100 text-blue-800';
+                    }
+
+                    return (
+                      <div key={idx} className={`p-3 rounded-xl border ${bg} space-y-1`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            {icon}
+                            <span className="text-xs font-bold text-slate-900">{audit.criterion}</span>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${badge}`}>
+                            {audit.status}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-600 pl-6 leading-relaxed">
+                          {audit.details}
+                        </p>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="text-xs text-slate-500">Criteria audit generated dynamically based on student profile parameters.</p>
+                )}
+              </div>
+            </div>
+
+            {/* Official Source Provenance Footer (Step 11) */}
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-slate-700">Official Data Source:</span>
+                {auditScholarship.sourceUrl ? (
+                  <a
+                    href={auditScholarship.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-blue-600 hover:underline flex items-center gap-1 font-medium"
+                  >
+                    <span>{auditScholarship.sourceName || 'Awarding Body Portal'}</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : (
+                  <span className="text-slate-500">Official Foundation Directory</span>
+                )}
+              </div>
+              {auditScholarship.lastVerifiedAt && (
+                <div className="text-[11px] text-slate-400">
+                  Last verified: {new Date(auditScholarship.lastVerifiedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                </div>
+              )}
+            </div>
+
+            {/* Non-Guarantee Disclaimer (Step 18) */}
+            <div className="text-[11px] text-slate-500 leading-relaxed border-t border-slate-100 pt-3">
+              <strong>Advisory Notice:</strong> Scholarship eligibility evaluations reflect alignment with publicly stated guidelines. Final award selections are made solely by funding committees based on competitive applicant pools. No financial award is guaranteed.
+            </div>
+
+            {/* Close Button */}
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setAuditScholarship(null)}
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition"
+              >
+                Close Audit
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   );

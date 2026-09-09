@@ -1,5 +1,5 @@
 import type { StudentProfile, AssessmentReport, ImprovementItem, CountryFit } from '../types';
-import { COUNTRIES_DATA } from '../data/countriesData';
+import { CountryFitEngine } from './countryFitEngine';
 
 export function calculateAssessmentReport(profile: StudentProfile): AssessmentReport {
   // 1. Academic Strength (0 - 100)
@@ -187,59 +187,19 @@ export function calculateAssessmentReport(profile: StudentProfile): AssessmentRe
   if (profile.financial.maxYearlyBudgetUSD <= 22000) {
     actionableImprovements.push({
       category: 'Financial Strategy',
-      title: 'Diversify Applications with Tuition-Free / Low-Tuition Nations',
-      description: 'Add Germany (TUM, RWTH Aachen) and South Korea (KAIST full-ride) to your shortlist alongside US/Canada to guarantee 100% debt-free graduation pathways.',
+      title: 'Diversify Applications with Low-Tuition & Merit Nations',
+      description: 'Consider adding Germany (TUM, RWTH Aachen) and South Korea (KAIST) to your shortlist alongside US/Canada to explore low-tuition and generous institutional grant pathways.',
       impact: 'Critical'
     });
   }
 
-  // Country Fit Analysis
-  const countryFitSummary: CountryFit[] = COUNTRIES_DATA.map(c => {
-    let fit = c.admissionFitPercent;
-    let reason = '';
-
-    if (c.code === 'US') {
-      if (profile.financial.maxYearlyBudgetUSD >= 30000 || (stdTest.totalScore && stdTest.totalScore >= 1380)) {
-        fit = 89;
-        reason = 'Excellent alignment with US holistic admission and STEM OPT benefits.';
-      } else {
-        fit = 78;
-        reason = 'Great match for scholarship-awarding state flagships with in-state waivers.';
-      }
-    } else if (c.code === 'CA') {
-      fit = 87;
-      reason = 'High GPA recognition, straightforward direct admission, and 3-year PGWP work rights.';
-    } else if (c.code === 'DE') {
-      if (profile.academic.gpa >= 3.3) {
-        fit = 88;
-        reason = 'Ideal budget fit: tuition is practically free and tech engineering demand is immense.';
-      } else {
-        fit = 74;
-        reason = 'Requires strict grade equivalency (Uni-Assist VPD evaluation).';
-      }
-    } else if (c.code === 'AU') {
-      fit = 84;
-      reason = 'Fast 3-year bachelor degree, high part-time student wage, and automatic merit discounts.';
-    } else if (c.code === 'KR') {
-      fit = 90;
-      reason = 'Top match: KAIST and Korean national universities offer 100% full tuition waivers for international STEM students.';
-    } else {
-      reason = `Balanced international environment for ${profile.intendedStudy.major}.`;
-    }
-
-    let status: CountryFit['status'] = 'Good Match';
-    if (fit >= 86) status = 'Strong Match';
-    else if (fit >= 78) status = 'Good Match';
-    else if (fit >= 68) status = 'Moderate Match';
-    else status = 'Challenging';
-
-    return {
-      country: c.countryName,
-      matchPercent: fit,
-      status,
-      reason
-    };
-  });
+  // Country Fit Analysis (Step 17: Multi-dimensional constraint evaluation)
+  const countryFitSummary: CountryFit[] = CountryFitEngine.evaluateAll(profile).map(res => ({
+    country: res.country,
+    matchPercent: res.matchPercent,
+    status: res.status,
+    reason: res.reason
+  }));
 
   return {
     overallScore,
