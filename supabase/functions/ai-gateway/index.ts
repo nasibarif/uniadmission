@@ -122,20 +122,23 @@ serve(async (req: Request) => {
           userId = user.id;
 
           // Load authoritative active subscription from database
+          // Load authoritative active subscription from database
           if (supabaseAdmin) {
+            const now = new Date().toISOString();
             const { data: sub } = await supabaseAdmin
               .from("subscriptions")
-              .select("plan_id, status")
+              .select("plan_id, status, expires_at")
               .eq("user_id", user.id)
               .eq("status", "active")
+              .or(`expires_at.is.null,expires_at.gt.${now}`)
               .order("created_at", { ascending: false })
               .limit(1)
               .maybeSingle();
 
             if (sub && sub.plan_id) {
               userTier = sub.plan_id;
-            } else if (user.user_metadata?.tier) {
-              userTier = user.user_metadata.tier;
+            } else {
+              userTier = "Free";
             }
           }
         }

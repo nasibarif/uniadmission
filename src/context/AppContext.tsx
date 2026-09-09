@@ -246,21 +246,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (sub && sub.tier) {
         setUserTier(sub.tier);
       } else {
-        const userData = await AuthService.fetchUserData(currentUser.id);
-        if (userData?.account?.tier) {
-          setUserTier(userData.account.tier);
-        }
+        setUserTier('Free');
       }
     }
   }, [currentUser]);
 
-  const initiateCheckout = async (_targetTier: UserTier): Promise<{ success: boolean; checkoutUrl?: string; error?: string }> => {
+  // Secure payment checkout session initiation
+  const initiateCheckout = async (targetTier: UserTier): Promise<{ success: boolean; checkoutUrl?: string; error?: string }> => {
     if (!currentUser) {
       return { success: false, error: 'Please sign in before upgrading your plan.' };
     }
-    // Open the upgrade/bKash payment modal
-    setIsUpgradeModalOpen(true);
-    return { success: true };
+
+    if (targetTier === 'Free') {
+      return { success: false, error: 'Free plan does not require checkout.' };
+    }
+
+    try {
+      const res = await SubscriptionService.createCheckoutSession(targetTier, currentUser);
+      if (res.success && res.checkoutUrl) {
+        window.location.href = res.checkoutUrl;
+        return { success: true, checkoutUrl: res.checkoutUrl };
+      }
+      return { success: false, error: res.error || 'Unable to initiate payment checkout.' };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Error initiating payment checkout.' };
+    }
   };
 
   // Secure checkout return handler: Never trust URL parameters for tier elevation

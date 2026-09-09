@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SubscriptionService } from '../services/subscriptionService';
 import { StorageService } from '../services/storageService';
-import { BkashPaymentService } from '../services/bkashPaymentService';
+import { PaymentService } from '../services/paymentService';
 import type { VaultDocument } from '../types';
 
 const storageStore: Record<string, string> = {};
@@ -77,11 +77,11 @@ describe('Security Hardening & Entitlement Integrity', () => {
 
   describe('Payment Tampering Prevention', () => {
     it('should reject client manipulation of BDT pricing', () => {
-      const canonicalPrice = BkashPaymentService.getPrice('Complete');
+      const canonicalPrice = PaymentService.getPrice('Complete');
       expect(canonicalPrice).toBe(7990);
 
       // Verify that getPrice returns zero for unknown or untrusted tiers
-      expect(BkashPaymentService.getPrice('ArbitraryHackerTier' as any)).toBe(0);
+      expect(PaymentService.getPrice('ArbitraryHackerTier' as any)).toBe(0);
     });
 
     it('should refuse to generate checkout session if user is not signed in', async () => {

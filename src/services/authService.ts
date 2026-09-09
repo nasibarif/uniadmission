@@ -1,4 +1,4 @@
-import type { UserAccount, StudentProfile, ApplicationItem, VaultDocument, UserTier } from '../types';
+import type { UserAccount, StudentProfile, ApplicationItem, VaultDocument } from '../types';
 import { SAMPLE_PROFILES } from '../data/sampleProfiles';
 import { supabase, isSupabaseConfigured } from './supabaseClient';
 import { sanitizeText, sanitizeObject } from '../utils/security';
@@ -60,7 +60,7 @@ export class AuthService {
           id: session.user.id,
           fullName: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Student',
           email: session.user.email || '',
-          tier: (session.user.user_metadata?.tier as UserTier) || 'Explorer',
+          tier: 'Free',
           createdAt: session.user.created_at ? session.user.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
           lastLoginAt: session.user.last_sign_in_at || new Date().toISOString(),
         };
@@ -87,7 +87,7 @@ export class AuthService {
             id: session.user.id,
             fullName: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Student',
             email: session.user.email || '',
-            tier: (session.user.user_metadata?.tier as UserTier) || 'Explorer',
+            tier: 'Free',
             createdAt: session.user.created_at ? session.user.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
             lastLoginAt: session.user.last_sign_in_at || new Date().toISOString(),
           };
@@ -148,7 +148,7 @@ export class AuthService {
           id: data.user.id,
           fullName: data.user.user_metadata?.full_name || cleanEmail.split('@')[0],
           email: data.user.email || cleanEmail,
-          tier: (data.user.user_metadata?.tier as UserTier) || 'Explorer',
+          tier: 'Free',
           createdAt: data.user.created_at ? data.user.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
           lastLoginAt: new Date().toISOString(),
         };
@@ -529,7 +529,7 @@ export class AuthService {
 
           if (data.account?.fullName) profilePayload.full_name = sanitizeText(data.account.fullName, 150);
           if (data.account?.email) profilePayload.email = data.account.email.trim().toLowerCase();
-          if (data.account?.tier) profilePayload.tier = data.account.tier;
+          // SECURITY: profile tier cannot be updated by client state. Only server-verified subscriptions update tier.
 
           if (data.profile) {
             const sanitizedProfile = sanitizeObject(data.profile);

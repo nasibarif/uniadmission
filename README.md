@@ -92,13 +92,16 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 # Server-Side AI Gateway (Never expose via VITE_*)
 GEMINI_API_KEY=your-gemini-api-key
 
-# Server-Side bKash MFS Gateway (Strictly Server / Edge Functions Only)
-BKASH_BASE_URL=https://tokenized.sandbox.bka.sh/v2.0
-BKASH_APP_KEY=your-bkash-app-key
-BKASH_APP_SECRET=your-bkash-app-secret
-BKASH_USERNAME=your-bkash-username
-BKASH_PASSWORD=your-bkash-password
-BKASH_CALLBACK_URL=https://app.uniadmission.com/api/bkash/callback
+# Server-Side Payment Gateway (SSLCOMMERZ / Edge Functions Only)
+PAYMENT_GATEWAY=sslcommerz
+SSLCOMMERZ_STORE_ID=your-sslcommerz-store-id
+SSLCOMMERZ_STORE_PASSWORD=your-sslcommerz-store-password
+SSLCOMMERZ_BASE_URL=https://sandbox.sslcommerz.com
+APP_BASE_URL=http://localhost:5173
+PAYMENT_SUCCESS_URL=http://localhost:5173/payments/callback/sslcommerz/success
+PAYMENT_FAIL_URL=http://localhost:5173/payments/callback/sslcommerz/fail
+PAYMENT_CANCEL_URL=http://localhost:5173/payments/callback/sslcommerz/cancel
+PAYMENT_IPN_URL=http://localhost:5173/payments/webhook/sslcommerz
 ```
 
 ### Development Server
@@ -109,6 +112,9 @@ Open `http://localhost:5173` in your browser.
 
 ### Verification & Testing
 ```bash
+# Run automated test suite
+npm test
+
 # Type check and build production bundles
 npm run build
 
@@ -118,11 +124,45 @@ npm run lint
 
 ---
 
+## 💳 Payment Architecture & Security Model
+
+UniAdmission implements a **secure, gateway-agnostic payment architecture** featuring **SSLCOMMERZ** as the primary provider (with pluggable support for `aamarpay` and `shurjopay`):
+
+### 1. Gateway Abstraction (`supabase/functions/_shared/payment/`)
+- Unified `IPaymentGateway` interface exposing `createPayment()`, `verifyPayment()`, and `queryPayment()`.
+- Factory `getPaymentGateway()` selects the configured gateway (`PAYMENT_GATEWAY=sslcommerz`).
+
+### 2. Server-Authoritative Plan Pricing (BDT)
+- The frontend sends only `{ planId: "Application" }`. The server dictates prices, durations, and currency:
+  - **Free:** ৳0
+  - **Explorer:** ৳1,490 (365 days)
+  - **Application:** ৳3,990 (365 days)
+  - **Complete:** ৳7,990 (365 days)
+  - **School:** ৳19,990 (365 days)
+- Client-supplied amounts and currencies are strictly rejected.
+
+### 3. Server-to-Server Order Validation & Idempotency
+- Browser redirects are never treated as proof of payment.
+- When the gateway reports a transaction, the server calls the SSLCOMMERZ Order Validation API (`validationserverAPI.php`) verifying:
+  - `status === 'VALID' || status === 'VALIDATED'`
+  - `tran_id === merchant_transaction_id`
+  - Exact amount match against local database records
+  - Currency match (`BDT`)
+- Subscriptions are activated only after successful server validation.
+- Database unique constraints and status checks prevent duplicate fulfillment across IPN and browser callbacks.
+
+### 4. Zero Client Trust Entitlements
+- User identity is extracted strictly from authenticated Supabase JWT session headers (`auth.getUser()`).
+- Feature access and AI Gateway quotas are derived directly from active subscriptions in PostgreSQL (`public.subscriptions`), ignoring `user_metadata.tier` and client payload manipulation.
+
+---
+
 ## 🔒 Security & Compliance
 
-- **No Client-Side Secrets**: All Gemini API keys, payment webhook secrets, and database service keys are isolated server-side.
-- **Row Level Security (RLS)**: PostgreSQL policies enforce strict tenant isolation (`auth.uid() = user_id`).
-- **Client-Side Encryption**: Sensitive personal documents in the Document Vault are encrypted using `crypto.subtle` AES-GCM-256 before upload.
+- **No Client-Side Gateway Secrets**: SSLCOMMERZ store credentials and service role keys remain exclusively on the server.
+- **Row Level Security (RLS)**: PostgreSQL policies enforce strict tenant isolation (`auth.uid() = user_id`) on `payment_transactions` and `subscriptions`.
+- **Client-Side Encryption**: Sensitive personal documents in the Document Vault are encrypted using `crypto.subtle` AES-GCM-256 before cloud storage.
+- **Content Security Policy**: Hardened headers in `vercel.json` and `vite.config.ts` restrict outbound connections and frame ancestry.
 - **Prompt Injection Delimiters**: Strict delimiter tagging and defensive system prompts sanitize user text before LLM inference.
 
 ---

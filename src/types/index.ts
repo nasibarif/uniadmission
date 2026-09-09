@@ -534,48 +534,87 @@ export interface CounselorRosterStudent {
 }
 
 // -------------------------------------------------------------
-// Production Fixation: bKash MFS Integration & Audit Types
+// Gateway-Agnostic Payment & Entitlement Types (SSLCOMMERZ, etc.)
 // -------------------------------------------------------------
-export type BkashTransactionStatus = 
-  | 'initiated' 
-  | 'pending' 
-  | 'completed' 
-  | 'failed' 
-  | 'cancelled' 
-  | 'refunded' 
+export type PaymentTransactionStatus = 
+  | 'pending'
+  | 'initiated'
+  | 'processing'
+  | 'success'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'expired'
+  | 'refunded'
   | 'verification_failed';
 
-export interface BkashPaymentTransaction {
+export interface PaymentTransaction {
   id: string;
   userId: string;
-  provider: 'bkash';
-  paymentId: string;
-  trxId?: string;
-  customerAccount?: string;
+  provider: string; // 'sslcommerz' | 'bkash' | 'aamarpay' | 'shurjopay'
+  merchantTransactionId: string;
+  providerSessionId?: string;
+  providerTransactionId?: string;
+  providerValidationId?: string;
+  paymentMethod?: string;
   planId: UserTier;
   amount: number;
   currency: 'BDT';
-  status: BkashTransactionStatus;
+  status: PaymentTransactionStatus;
   failureReason?: string;
-  merchantInvoiceNumber?: string;
+  metadata?: Record<string, unknown>;
   createdAt: string;
   verifiedAt?: string;
   updatedAt?: string;
+  // Legacy compatibility fields
+  paymentId?: string;
+  trxId?: string;
+  customerAccount?: string;
+  merchantInvoiceNumber?: string;
 }
 
+export interface CreatePaymentSessionResponse {
+  success: boolean;
+  provider?: string;
+  transactionId?: string;
+  checkoutUrl?: string;
+  amount?: number;
+  currency?: 'BDT';
+  planId?: UserTier;
+  error?: string;
+}
+
+export interface PaymentStatusResponse {
+  success: boolean;
+  transactionId?: string;
+  status: PaymentTransactionStatus;
+  planId?: UserTier;
+  amount?: number;
+  currency?: string;
+  provider?: string;
+  paymentMethod?: string;
+  createdAt?: string;
+  verifiedAt?: string;
+  failureReason?: string;
+  error?: string;
+}
+
+// Backward-compatibility aliases during migration
+export type BkashTransactionStatus = PaymentTransactionStatus;
+export type BkashPaymentTransaction = PaymentTransaction;
 export interface BkashCreatePaymentResponse {
   success: boolean;
   paymentId?: string;
   merchantInvoiceNumber?: string;
   amount?: number;
-  currency: 'BDT';
-  merchantAccountNumber: string;
+  currency?: 'BDT';
+  merchantAccountNumber?: string;
+  error?: string;
+}
+export interface BkashVerifyPaymentResponse {
+  success: boolean;
+  transaction?: PaymentTransaction;
   error?: string;
 }
 
-export interface BkashVerifyPaymentResponse {
-  success: boolean;
-  transaction?: BkashPaymentTransaction;
-  error?: string;
-}
 

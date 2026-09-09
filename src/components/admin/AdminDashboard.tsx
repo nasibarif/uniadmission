@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
-import type { University, Scholarship, BkashPaymentTransaction, BkashTransactionStatus } from '../../types';
-import { BkashPaymentService } from '../../services/bkashPaymentService';
+import type { University, Scholarship, PaymentTransaction, PaymentTransactionStatus } from '../../types';
+import { PaymentService } from '../../services/paymentService';
 import { 
   ShieldCheck, 
   CheckCircle2, 
@@ -40,9 +40,9 @@ export const AdminDashboard: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCountry, setFilterCountry] = useState('All');
 
-  // bKash Payments State
-  const [transactions, setTransactions] = useState<BkashPaymentTransaction[]>([]);
-  const [paymentStatusFilter, setPaymentStatusFilter] = useState<'all' | BkashTransactionStatus>('all');
+  // Gateway Payments State
+  const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<'all' | PaymentTransactionStatus>('all');
   const [paymentSearch, setPaymentSearch] = useState('');
   const [isUpdatingTx, setIsUpdatingTx] = useState<string | null>(null);
 
@@ -100,24 +100,23 @@ export const AdminDashboard: React.FC = () => {
     localStorage.setItem('uniadmission_admin_audit_logs', JSON.stringify(updated));
   };
 
-  // Load bKash payment transactions
+  // Load payment transactions
   const loadTransactions = async () => {
-    const list = await BkashPaymentService.getTransactions();
+    const list = await PaymentService.getTransactions();
     if (list.length === 0) {
       // Seed realistic demonstration transactions if completely empty
-      const sampleTxs: BkashPaymentTransaction[] = [
+      const sampleTxs: PaymentTransaction[] = [
         {
           id: 'tx-seed-1',
           userId: 'usr-101',
-          provider: 'bkash',
-          paymentId: 'BK_PAY_20260908_01',
-          trxId: '9J4K2L8M1N',
-          customerAccount: '01711223344',
+          provider: 'sslcommerz',
+          merchantTransactionId: 'UA_TX_20260908_01',
+          providerTransactionId: 'SSL_BANK_882910',
+          paymentMethod: 'bKash-SSLCOMMERZ',
           planId: 'Application',
           amount: 3990,
           currency: 'BDT',
-          status: 'completed',
-          merchantInvoiceNumber: 'INV-882910',
+          status: 'success',
           createdAt: '2026-09-08 16:30:00',
           verifiedAt: '2026-09-08 16:31:12',
           updatedAt: '2026-09-08 16:31:12',
@@ -125,15 +124,14 @@ export const AdminDashboard: React.FC = () => {
         {
           id: 'tx-seed-2',
           userId: 'usr-102',
-          provider: 'bkash',
-          paymentId: 'BK_PAY_20260908_02',
-          trxId: '8B7N3M2K9L',
-          customerAccount: '01988776655',
+          provider: 'sslcommerz',
+          merchantTransactionId: 'UA_TX_20260908_02',
+          providerTransactionId: 'SSL_BANK_882911',
+          paymentMethod: 'VISA-SSLCOMMERZ',
           planId: 'Explorer',
           amount: 1490,
           currency: 'BDT',
-          status: 'completed',
-          merchantInvoiceNumber: 'INV-882911',
+          status: 'success',
           createdAt: '2026-09-08 18:15:00',
           verifiedAt: '2026-09-08 18:16:05',
           updatedAt: '2026-09-08 18:16:05',
@@ -141,37 +139,35 @@ export const AdminDashboard: React.FC = () => {
         {
           id: 'tx-seed-3',
           userId: 'usr-103',
-          provider: 'bkash',
-          paymentId: 'BK_PAY_20260909_03',
-          customerAccount: '01855443322',
+          provider: 'sslcommerz',
+          merchantTransactionId: 'UA_TX_20260909_03',
+          paymentMethod: 'Nagad-SSLCOMMERZ',
           planId: 'Complete',
           amount: 7990,
           currency: 'BDT',
           status: 'pending',
-          merchantInvoiceNumber: 'INV-882912',
           createdAt: '2026-09-09 11:20:00',
           updatedAt: '2026-09-09 11:20:00',
         },
         {
           id: 'tx-seed-4',
           userId: 'usr-104',
-          provider: 'bkash',
-          paymentId: 'BK_PAY_20260909_04',
-          trxId: 'BADTRX9900',
-          customerAccount: '01622334455',
+          provider: 'sslcommerz',
+          merchantTransactionId: 'UA_TX_20260909_04',
+          providerTransactionId: 'FAIL_9900',
+          paymentMethod: 'MasterCard-SSLCOMMERZ',
           planId: 'Explorer',
           amount: 1490,
           currency: 'BDT',
-          status: 'verification_failed',
-          failureReason: 'Transaction ID not found in bKash bank gateway statement.',
-          merchantInvoiceNumber: 'INV-882913',
+          status: 'failed',
+          failureReason: 'Order validation failed: bank gateway timeout.',
           createdAt: '2026-09-09 14:05:00',
           updatedAt: '2026-09-09 14:06:22',
         }
       ];
       setTransactions(sampleTxs);
       try {
-        localStorage.setItem('uniadmission_bkash_transactions', JSON.stringify(sampleTxs));
+        localStorage.setItem('uniadmission_payment_transactions', JSON.stringify(sampleTxs));
       } catch {
         // ignore
       }
@@ -185,43 +181,44 @@ export const AdminDashboard: React.FC = () => {
   }, [activeSubTab]);
 
   // Admin Actions on Payments
-  const handleAdminVerifyPayment = async (tx: BkashPaymentTransaction) => {
+  const handleAdminVerifyPayment = async (tx: PaymentTransaction) => {
     setIsUpdatingTx(tx.id);
-    const success = await BkashPaymentService.adminUpdateTransaction(
+    const success = await PaymentService.adminUpdateTransaction(
       tx.id, 
-      'completed', 
-      'Admin manual verification confirmed against bKash merchant ledger.'
+      'success', 
+      'Admin manual verification confirmed against SSLCOMMERZ gateway ledger.'
     );
     if (success) {
       saveAuditLog({
         actor: 'billing.admin@uniadmission.io',
         action: 'VERIFY_PAYMENT',
         entityType: 'Payment',
-        entityName: `bKash Payment ${tx.paymentId}`,
-        details: `Manually confirmed payment of ৳${tx.amount.toLocaleString()} BDT for user ${tx.userId} (${tx.planId} Plan). TrxID: ${tx.trxId || 'N/A'}.`,
-        auditorNotes: 'Audited against bKash merchant statement.'
+        entityName: `Payment ${tx.merchantTransactionId || tx.id}`,
+        details: `Manually confirmed payment of ৳${tx.amount.toLocaleString()} BDT for user ${tx.userId} (${tx.planId} Plan). Method: ${tx.paymentMethod || 'Gateway'}.`,
+        auditorNotes: 'Audited against SSLCOMMERZ merchant statement.'
       });
       await loadTransactions();
     }
     setIsUpdatingTx(null);
   };
 
-  const handleAdminRefundPayment = async (tx: BkashPaymentTransaction) => {
-    if (!confirm(`Are you sure you want to mark transaction ${tx.paymentId} (৳${tx.amount} BDT) as refunded? This will revoke the user's entitlements.`)) {
+  const handleAdminRefundPayment = async (tx: PaymentTransaction) => {
+    const ref = tx.merchantTransactionId || tx.id;
+    if (!confirm(`Are you sure you want to mark transaction ${ref} (৳${tx.amount} BDT) as refunded? This will revoke the user's entitlements.`)) {
       return;
     }
     setIsUpdatingTx(tx.id);
-    const success = await BkashPaymentService.adminUpdateTransaction(
+    const success = await PaymentService.adminUpdateTransaction(
       tx.id,
       'refunded',
-      'Refund processed by admin to user bKash wallet.'
+      'Refund processed by admin via payment gateway.'
     );
     if (success) {
       saveAuditLog({
         actor: 'billing.admin@uniadmission.io',
         action: 'REFUND_PAYMENT',
         entityType: 'Payment',
-        entityName: `bKash Refund ${tx.paymentId}`,
+        entityName: `Refund ${ref}`,
         details: `Issued refund of ৳${tx.amount.toLocaleString()} BDT for user ${tx.userId} (${tx.planId} Plan).`,
         auditorNotes: 'Customer support request / 7-day guarantee.'
       });
@@ -275,14 +272,17 @@ export const AdminDashboard: React.FC = () => {
     }))
   ];
 
-  // bKash Transactions filter calculation
+  // Payment Transactions filter calculation
   const filteredTransactions = transactions.filter(t => {
     const matchesFilter = paymentStatusFilter === 'all' || t.status === paymentStatusFilter;
     const q = paymentSearch.toLowerCase();
+    const txRef = (t.merchantTransactionId || t.paymentId || '').toLowerCase();
+    const provTx = (t.providerTransactionId || t.trxId || '').toLowerCase();
     const matchesSearch = !q || 
-      t.paymentId.toLowerCase().includes(q) ||
-      (t.trxId && t.trxId.toLowerCase().includes(q)) ||
-      (t.customerAccount && t.customerAccount.toLowerCase().includes(q)) ||
+      txRef.includes(q) ||
+      provTx.includes(q) ||
+      (t.paymentMethod && t.paymentMethod.toLowerCase().includes(q)) ||
+      (t.provider && t.provider.toLowerCase().includes(q)) ||
       t.userId.toLowerCase().includes(q) ||
       t.planId.toLowerCase().includes(q);
     return matchesFilter && matchesSearch;
@@ -449,12 +449,12 @@ export const AdminDashboard: React.FC = () => {
           onClick={() => setActiveSubTab('payments')}
           className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
             activeSubTab === 'payments'
-              ? 'bg-[#E2136E] text-white shadow-xs'
+              ? 'bg-blue-600 text-white shadow-xs'
               : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
           }`}
         >
           <CreditCard className="h-3.5 w-3.5" />
-          <span>bKash Payments ({transactions.length})</span>
+          <span>Payment Transactions ({transactions.length})</span>
         </button>
       </div>
 
@@ -742,23 +742,23 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Sub-Tab 5: bKash Payments & Audit Console */}
+      {/* Sub-Tab 5: Payment Transactions & Audit Console */}
       {activeSubTab === 'payments' && (
         <div className="space-y-6 animate-in fade-in">
-          {/* bKash Payment Metrics Banner */}
+          {/* Payment Metrics Banner */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="p-4 rounded-2xl bg-gradient-to-br from-pink-500/10 to-rose-500/5 border border-pink-200">
-              <span className="text-[10px] font-bold text-pink-700 uppercase tracking-wider block">Total BDT Collected</span>
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-200">
+              <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block">Total BDT Collected</span>
               <span className="text-2xl font-black text-slate-900 mt-1 block">
-                ৳{transactions.filter(t => t.status === 'completed').reduce((sum, t) => sum + t.amount, 0).toLocaleString()} <span className="text-xs font-semibold text-slate-500">BDT</span>
+                ৳{transactions.filter(t => t.status === 'success' || t.status === 'completed').reduce((sum, t) => sum + t.amount, 0).toLocaleString()} <span className="text-xs font-semibold text-slate-500">BDT</span>
               </span>
-              <span className="text-[10px] text-pink-700 mt-1 block font-medium">Authoritative bKash Transactions</span>
+              <span className="text-[10px] text-blue-700 mt-1 block font-medium">Authoritative Gateway Collections</span>
             </div>
 
             <div className="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200">
               <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Completed Orders</span>
               <span className="text-2xl font-black text-emerald-900 mt-1 block">
-                {transactions.filter(t => t.status === 'completed').length}
+                {transactions.filter(t => t.status === 'success' || t.status === 'completed').length}
               </span>
               <span className="text-[10px] text-emerald-700 mt-1 block font-medium">Active verified entitlements</span>
             </div>
@@ -766,17 +766,17 @@ export const AdminDashboard: React.FC = () => {
             <div className="p-4 rounded-2xl bg-amber-50/70 border border-amber-200">
               <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">Pending / In-Flight</span>
               <span className="text-2xl font-black text-amber-900 mt-1 block">
-                {transactions.filter(t => t.status === 'pending' || t.status === 'initiated').length}
+                {transactions.filter(t => t.status === 'pending' || t.status === 'initiated' || t.status === 'processing').length}
               </span>
-              <span className="text-[10px] text-amber-700 mt-1 block font-medium">Awaiting customer TrxID</span>
+              <span className="text-[10px] text-amber-700 mt-1 block font-medium">Awaiting gateway confirmation</span>
             </div>
 
             <div className="p-4 rounded-2xl bg-red-50/70 border border-red-200">
-              <span className="text-[10px] font-bold text-red-700 uppercase tracking-wider block">Failed / Disputed</span>
+              <span className="text-[10px] font-bold text-red-700 uppercase tracking-wider block">Failed / Refunded</span>
               <span className="text-2xl font-black text-red-900 mt-1 block">
-                {transactions.filter(t => t.status === 'verification_failed' || t.status === 'refunded').length}
+                {transactions.filter(t => t.status === 'failed' || t.status === 'verification_failed' || t.status === 'refunded' || t.status === 'cancelled').length}
               </span>
-              <span className="text-[10px] text-red-700 mt-1 block font-medium">Requires admin intervention</span>
+              <span className="text-[10px] text-red-700 mt-1 block font-medium">Requires attention or refunded</span>
             </div>
           </div>
 
@@ -786,19 +786,19 @@ export const AdminDashboard: React.FC = () => {
               <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search TrxID, User ID, Invoice, or Phone..."
+                placeholder="Search Transaction ID, User ID, Gateway, or Method..."
                 value={paymentSearch}
                 onChange={(e) => setPaymentSearch(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-500"
+                className="w-full pl-9 pr-4 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
             <div className="flex items-center gap-2 overflow-x-auto">
               <span className="text-xs text-slate-500 font-semibold shrink-0">Status:</span>
-              {(['all', 'completed', 'pending', 'verification_failed', 'refunded'] as const).map((st) => (
+              {(['all', 'success', 'pending', 'failed', 'refunded'] as const).map((st) => (
                 <button
                   key={st}
-                  onClick={() => setPaymentStatusFilter(st)}
+                  onClick={() => setPaymentStatusFilter(st as PaymentTransactionStatus | 'all')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition ${
                     paymentStatusFilter === st
                       ? 'bg-slate-900 text-white'
@@ -818,10 +818,10 @@ export const AdminDashboard: React.FC = () => {
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[10px] tracking-wider">
                     <th className="p-3.5">Timestamp</th>
-                    <th className="p-3.5">User / Account</th>
+                    <th className="p-3.5">User / Gateway</th>
                     <th className="p-3.5">Plan</th>
                     <th className="p-3.5">Amount</th>
-                    <th className="p-3.5">bKash TrxID</th>
+                    <th className="p-3.5">Transaction Ref</th>
                     <th className="p-3.5">Status</th>
                     <th className="p-3.5 text-right">Admin Actions</th>
                   </tr>
@@ -840,33 +840,33 @@ export const AdminDashboard: React.FC = () => {
                           {tx.createdAt.replace('T', ' ').substring(0, 16)}
                         </td>
                         <td className="p-3.5">
-                          <div className="font-semibold text-slate-800">{tx.customerAccount || 'N/A'}</div>
+                          <div className="font-semibold text-slate-800 uppercase text-[11px]">{tx.provider || 'sslcommerz'}</div>
                           <div className="text-[10px] text-slate-400 font-mono">User: {tx.userId}</div>
+                          {tx.paymentMethod && (
+                            <div className="text-[10px] text-indigo-600 font-medium">{tx.paymentMethod}</div>
+                          )}
                         </td>
                         <td className="p-3.5 font-bold text-slate-800">
-                          <span className="px-2 py-0.5 rounded-md bg-pink-50 text-[#E2136E] border border-pink-100">
+                          <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-100">
                             {tx.planId}
                           </span>
                         </td>
                         <td className="p-3.5 font-black text-slate-900 whitespace-nowrap">
                           ৳{tx.amount.toLocaleString()} <span className="text-[10px] text-slate-400 font-normal">BDT</span>
                         </td>
-                        <td className="p-3.5 font-mono font-bold text-slate-800">
-                          {tx.trxId ? (
-                            <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-800">
-                              {tx.trxId}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 italic">None</span>
+                        <td className="p-3.5 font-mono text-slate-800">
+                          <div className="font-semibold text-[11px]">{tx.merchantTransactionId || tx.id}</div>
+                          {tx.providerTransactionId && (
+                            <div className="text-[10px] text-slate-400">Ext: {tx.providerTransactionId}</div>
                           )}
                         </td>
                         <td className="p-3.5">
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${
-                            tx.status === 'completed'
+                            tx.status === 'completed' || tx.status === 'success'
                               ? 'bg-emerald-100 text-emerald-800'
-                              : tx.status === 'pending'
+                              : tx.status === 'pending' || tx.status === 'initiated' || tx.status === 'processing'
                               ? 'bg-amber-100 text-amber-800'
-                              : tx.status === 'verification_failed'
+                              : tx.status === 'verification_failed' || tx.status === 'failed'
                               ? 'bg-red-100 text-red-800'
                               : tx.status === 'refunded'
                               ? 'bg-purple-100 text-purple-800'
@@ -876,7 +876,7 @@ export const AdminDashboard: React.FC = () => {
                           </span>
                         </td>
                         <td className="p-3.5 text-right whitespace-nowrap space-x-1.5">
-                          {tx.status !== 'completed' && (
+                          {tx.status !== 'completed' && tx.status !== 'success' && (
                             <button
                               onClick={() => handleAdminVerifyPayment(tx)}
                               disabled={isUpdatingTx === tx.id}
@@ -885,7 +885,7 @@ export const AdminDashboard: React.FC = () => {
                               Verify
                             </button>
                           )}
-                          {tx.status === 'completed' && (
+                          {(tx.status === 'completed' || tx.status === 'success') && (
                             <button
                               onClick={() => handleAdminRefundPayment(tx)}
                               disabled={isUpdatingTx === tx.id}

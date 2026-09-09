@@ -235,55 +235,11 @@ function localSecurityAndGatewayPlugin(): Plugin {
         });
       });
 
-      // Dev Checkout Handler (bKash sandbox fallback)
-      server.middlewares.use('/api/checkout', (req, res) => {
-        if (req.method === 'OPTIONS') {
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-          res.statusCode = 200;
-          res.end();
-          return;
-        }
+      // Secure Dev Payment Gateway Handlers (Mocking /payments Edge Function for local dev)
+      const devPaymentTransactions = new Map<string, any>();
 
-        if (req.method !== 'POST') {
-          res.statusCode = 405;
-          res.end(JSON.stringify({ error: 'Method not allowed' }));
-          return;
-        }
-
-        let body = '';
-        req.on('data', chunk => {
-          body += chunk;
-        });
-
-        req.on('end', () => {
-          res.setHeader('Content-Type', 'application/json');
-          try {
-            const { tier, userId } = JSON.parse(body || '{}');
-            const sessionId = `sub_dev_${Date.now()}`;
-            devSubscriptions.set(userId || 'current-user', { tier, status: 'active', sessionId });
-
-            res.statusCode = 200;
-            res.end(
-              JSON.stringify({
-                success: true,
-                isSandbox: true,
-                sessionId,
-                // SECURITY: Never include ?tier=... in checkout return URL
-                checkoutUrl: `/?session_id=${sessionId}&checkout_success=true`,
-                message: 'Local sandbox checkout session created.',
-              })
-            );
-          } catch (err: any) {
-            console.error('[Dev Checkout Error]:', err?.message || err);
-            res.statusCode = 500;
-            res.end(JSON.stringify({ success: false, error: 'Checkout session creation failed' }));
-          }
-        });
-      });
-
-      // bKash Create Payment Endpoint
-      server.middlewares.use('/api/bkash/create', (req, res) => {
+      // POST /api/payments/create
+      server.middlewares.use('/api/payments/create', (req, res) => {
         if (req.method === 'OPTIONS') {
           res.setHeader('Access-Control-Allow-Origin', '*');
           res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -302,6 +258,7 @@ function localSecurityAndGatewayPlugin(): Plugin {
         req.on('data', chunk => { body += chunk; });
         req.on('end', () => {
           res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Access-Control-Allow-Origin', '*');
           try {
             const { planId } = JSON.parse(body || '{}');
             const bdtPrices: Record<string, number> = {
@@ -311,85 +268,96 @@ function localSecurityAndGatewayPlugin(): Plugin {
               Complete: 7990,
               School: 19990,
             };
-            const amount = bdtPrices[planId] ?? 1490;
-            const paymentId = `BK_PAY_${Date.now()}`;
-            const merchantInvoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
 
-            res.statusCode = 200;
-            res.end(JSON.stringify({
-              success: true,
-              paymentId,
-              merchantInvoiceNumber,
-              amount,
-              currency: 'BDT',
-              merchantAccountNumber: '01844-556677',
-            }));
-          } catch {
-            res.statusCode = 400;
-            res.end(JSON.stringify({ success: false, error: 'Invalid create payment request' }));
-          }
-        });
-      });
-
-      // bKash Verify Payment Endpoint
-      server.middlewares.use('/api/bkash/verify', (req, res) => {
-        if (req.method === 'OPTIONS') {
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-          res.statusCode = 200;
-          res.end();
-          return;
-        }
-
-        if (req.method !== 'POST') {
-          res.statusCode = 405;
-          res.end(JSON.stringify({ error: 'Method not allowed' }));
-          return;
-        }
-
-        let body = '';
-        req.on('data', chunk => { body += chunk; });
-        req.on('end', () => {
-          res.setHeader('Content-Type', 'application/json');
-          try {
-            const { paymentId, trxId, userId, planId } = JSON.parse(body || '{}');
-            const cleanedTrx = (trxId || '').trim().toUpperCase();
-
-            if (!/^[A-Z0-9]{8,12}$/.test(cleanedTrx)) {
+            if (!planId || !bdtPrices[planId] || planId === 'Free') {
               res.statusCode = 400;
-              res.end(JSON.stringify({ success: false, error: 'Invalid TrxID format' }));
+              res.end(JSON.stringify({ success: false, error: 'Invalid or unpaid subscription plan.' }));
               return;
             }
 
-            const targetTier = planId || 'Explorer';
-            devSubscriptions.set(userId || 'current-user', { tier: targetTier, status: 'active', sessionId: paymentId });
+            const amount = bdtPrices[planId];
+            const merchantTransactionId = `UA_DEV_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+            devPaymentTransactions.set(merchantTransactionId, {
+              merchantTransactionId,
+              planId,
+              amount,
+              currency: 'BDT',
+              status: 'success', // Dev sandbox auto-completes on redirect
+              createdAt: new Date().toISOString(),
+              verifiedAt: new Date().toISOString(),
+              paymentMethod: 'SSLCOMMERZ-DevSandbox',
+            });
+
+            devSubscriptions.set('current-user', { tier: planId, status: 'active', sessionId: merchantTransactionId });
 
             res.statusCode = 200;
             res.end(JSON.stringify({
               success: true,
-              transaction: {
-                paymentId,
-                trxId: cleanedTrx,
-                status: 'completed',
-                planId: targetTier,
-              }
+              provider: 'sslcommerz',
+              transactionId: merchantTransactionId,
+              checkoutUrl: `/#/payment/success?tran_id=${merchantTransactionId}`,
+              amount,
+              currency: 'BDT',
+              planId,
             }));
           } catch {
             res.statusCode = 400;
-            res.end(JSON.stringify({ success: false, error: 'Invalid verify payment request' }));
+            res.end(JSON.stringify({ success: false, error: 'Invalid create payment request payload.' }));
           }
         });
       });
 
+      // GET /api/payments/status
+      server.middlewares.use('/api/payments/status', (req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+
+        const url = new URL(req.url || '', 'http://localhost');
+        const txId = url.searchParams.get('transactionId') || url.searchParams.get('tran_id') || '';
+
+        const tx = devPaymentTransactions.get(txId);
+        if (tx) {
+          res.statusCode = 200;
+          res.end(JSON.stringify({
+            success: true,
+            transactionId: tx.merchantTransactionId,
+            status: tx.status,
+            planId: tx.planId,
+            amount: tx.amount,
+            currency: tx.currency,
+            provider: 'sslcommerz',
+            paymentMethod: tx.paymentMethod,
+            createdAt: tx.createdAt,
+            verifiedAt: tx.verifiedAt,
+          }));
+        } else {
+          // If not in memory but valid format, return success for dev smoothness
+          res.statusCode = 200;
+          res.end(JSON.stringify({
+            success: true,
+            transactionId: txId || 'DEV_TX_SUCCESS',
+            status: 'success',
+            planId: 'Application',
+            amount: 3990,
+            currency: 'BDT',
+            provider: 'sslcommerz',
+            paymentMethod: 'SSLCOMMERZ-Sandbox',
+            createdAt: new Date().toISOString(),
+            verifiedAt: new Date().toISOString(),
+          }));
+        }
+      });
+
       // Dev Entitlements Handler
-      server.middlewares.use('/api/entitlements', (req, res) => {
+      const handleEntitlements = (req: any, res: any) => {
         res.setHeader('Content-Type', 'application/json');
         res.setHeader('Access-Control-Allow-Origin', '*');
 
         const url = new URL(req.url || '', 'http://localhost');
         const userId = url.searchParams.get('userId') || 'current-user';
         const sub = devSubscriptions.get(userId);
-        const activeTier = sub?.tier || 'Explorer';
+        const activeTier = sub?.tier || 'Free';
 
         res.statusCode = 200;
         res.end(
@@ -397,6 +365,7 @@ function localSecurityAndGatewayPlugin(): Plugin {
             success: true,
             userId,
             tier: activeTier,
+            plan: activeTier,
             status: sub?.status || 'active',
             features: {
               canAccessFullMatching: ['Explorer', 'Application', 'Complete', 'School'].includes(activeTier),
@@ -407,7 +376,10 @@ function localSecurityAndGatewayPlugin(): Plugin {
             },
           })
         );
-      });
+      };
+
+      server.middlewares.use('/api/payments/entitlements', handleEntitlements);
+      server.middlewares.use('/api/entitlements', handleEntitlements);
     },
   };
 }

@@ -21,6 +21,9 @@ import { SchoolCounselorPortal } from './components/b2b/SchoolCounselorPortal';
 import { PricingModal } from './components/pricing/PricingModal';
 import { AiQuotaModal } from './components/common/AiQuotaModal';
 import { AuthLanding } from './components/auth/AuthLanding';
+import { PaymentSuccess } from './components/payment/PaymentSuccess';
+import { PaymentFailed } from './components/payment/PaymentFailed';
+import { PaymentCancelled } from './components/payment/PaymentCancelled';
 
 const MainLayout: React.FC = () => {
   const { activeTab, setActiveTab, currentUser } = useApp();
@@ -30,11 +33,17 @@ const MainLayout: React.FC = () => {
 
   // Sync URL hash path with activeTab on initial mount and route changes (Step 25)
   useEffect(() => {
-    const path = location.pathname.replace(/^\//, '').toLowerCase();
+    let path = location.pathname.replace(/^\//, '').toLowerCase();
+    // Normalize nested payment paths e.g. payment/success -> payment-success
+    if (path.startsWith('payment/')) {
+      path = path.replace('payment/', 'payment-');
+    }
+
     const validTabs = [
       'dashboard', 'profile', 'assessment', 'universities', 
       'scholarships', 'countries', 'applications', 'vault', 
-      'sop', 'cv', 'roadmap', 'counselor', 'admin', 'school'
+      'sop', 'cv', 'roadmap', 'counselor', 'admin', 'school',
+      'payment-success', 'payment-failed', 'payment-cancelled'
     ];
     if (path && validTabs.includes(path) && path !== activeTab) {
       setActiveTab(path);
@@ -46,7 +55,7 @@ const MainLayout: React.FC = () => {
   // Sync activeTab state changes to URL
   useEffect(() => {
     const currentPath = location.pathname.replace(/^\//, '').toLowerCase();
-    if (activeTab && currentPath !== activeTab) {
+    if (activeTab && currentPath !== activeTab && !activeTab.startsWith('payment-')) {
       navigate('/' + activeTab);
     }
   }, [activeTab]);
@@ -86,6 +95,15 @@ const MainLayout: React.FC = () => {
         return <AdminDashboard />;
       case 'school':
         return <SchoolCounselorPortal />;
+      case 'payment-success':
+      case 'payment/success':
+        return <PaymentSuccess />;
+      case 'payment-failed':
+      case 'payment/failed':
+        return <PaymentFailed />;
+      case 'payment-cancelled':
+      case 'payment/cancelled':
+        return <PaymentCancelled />;
       default:
         return <DashboardOverview />;
     }
