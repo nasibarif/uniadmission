@@ -130,6 +130,29 @@ export class StorageService {
     file: File,
     version = 1
   ): Promise<{ storagePath: string; mimeType: string; sizeBytes: number }> {
+    // 1. File size validation (max 20MB)
+    const MAX_SIZE_BYTES = 20 * 1024 * 1024;
+    if (file.size > MAX_SIZE_BYTES) {
+      throw new Error(`File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds the maximum 20MB limit.`);
+    }
+
+    // 2. Format & MIME validation
+    const ALLOWED_MIME_TYPES = new Set([
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain',
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+    ]);
+    const cleanExt = (file.name.split('.').pop() || '').toLowerCase();
+    const ALLOWED_EXTS = new Set(['pdf', 'doc', 'docx', 'txt', 'jpg', 'jpeg', 'png', 'webp']);
+
+    if ((file.type && !ALLOWED_MIME_TYPES.has(file.type)) && !ALLOWED_EXTS.has(cleanExt)) {
+      throw new Error(`Unsupported file type (.${cleanExt}). Supported formats: PDF, Word (.doc, .docx), plain text, and images (.jpg, .png, .webp).`);
+    }
+
     const storagePath = this.buildStoragePath(userId, docId, file.name, version);
     const mimeType = file.type || 'application/octet-stream';
 
@@ -147,9 +170,13 @@ export class StorageService {
           });
 
         if (error) {
+          // Cleanup IndexedDB on upload failure so state stays consistent
+          await deleteFileFromIndexedDB(storagePath);
           throw new Error(`Cloud document storage upload failed: ${error.message}`);
         }
       } catch (err: any) {
+        // Cleanup IndexedDB on upload failure
+        await deleteFileFromIndexedDB(storagePath);
         throw new Error(err?.message || 'Cloud storage upload exception occurred.');
       }
     }

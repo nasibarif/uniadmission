@@ -47,14 +47,14 @@ function checkBurstLimit(userId: string): { allowed: boolean; error?: string } {
 // Memory fallback daily tracker for local dev / unauthenticated requests
 const localDailyTracker = new Map<string, { count: number; date: string }>();
 
-function checkLocalDailyLimit(userId: string, tier: string): { allowed: boolean; remaining: number; limit: number; error?: string } {
+function checkLocalDailyLimit(userId: string, tier: string, overrideLimit?: number): { allowed: boolean; remaining: number; limit: number; error?: string } {
   const today = new Date().toISOString().split("T")[0];
-  const limit = TIER_DAILY_LIMITS[tier] || TIER_DAILY_LIMITS.Free;
+  const limit = overrideLimit ?? (TIER_DAILY_LIMITS[tier] || TIER_DAILY_LIMITS.Free);
   const userRecord = localDailyTracker.get(userId);
 
   if (!userRecord || userRecord.date !== today) {
     localDailyTracker.set(userId, { count: 1, date: today });
-    return { allowed: true, remaining: limit - 1, limit };
+    return { allowed: true, remaining: Math.max(0, limit - 1), limit };
   }
 
   if (userRecord.count >= limit) {
@@ -62,12 +62,12 @@ function checkLocalDailyLimit(userId: string, tier: string): { allowed: boolean;
       allowed: false,
       remaining: 0,
       limit,
-      error: `Daily AI quota reached (${limit} requests/day for your ${tier} plan). Please upgrade for higher limits.`,
+      error: `Daily AI quota reached (${limit} requests/day for your ${tier} tier). Please sign in or upgrade for higher limits.`,
     };
   }
 
   userRecord.count += 1;
-  return { allowed: true, remaining: limit - userRecord.count, limit };
+  return { allowed: true, remaining: Math.max(0, limit - userRecord.count), limit };
 }
 
 serve(async (req: Request) => {
@@ -154,7 +154,7 @@ serve(async (req: Request) => {
 
     if (!ALLOWED_ACTIONS.has(action)) {
       return new Response(
-        JSON.stringify({ success: false, error: `Invalid AI action: ${action}` }),
+        JSON.stringify({ success: false, error: { code: "INVALID_ACTION", message: `Invalid AI action: ${action}` } }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -162,10 +162,42 @@ serve(async (req: Request) => {
       );
     }
 
+    // Server-side action tier gating: sop, critique, and cv require paid plans
+    const PAID_ACTIONS = new Set(["sop", "critique", "cv"]);
+    const PAID_TIERS = new Set(["Application", "Complete", "School"]);
+    if (PAID_ACTIONS.has(action) && !PAID_TIERS.has(tier)) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: {
+            code: "TIER_UPGRADE_REQUIRED",
+            message: `The '${action}' tool requires an active Application, Complete, or School plan. Please upgrade your subscription.`,
+          },
+        }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Anonymous request restrictions (general/counselor only, max 2 requests/day)
+    if (userId === "anonymous") {
+      if (action !== "general" && action !== "counselor") {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: {
+              code: "AUTH_REQUIRED",
+              message: "Please sign in to access specialized admissions AI tools.",
+            },
+          }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
     const model = payload.model || "gemini-2.5-flash";
     if (!ALLOWED_MODELS.has(model)) {
       return new Response(
-        JSON.stringify({ success: false, error: `Invalid AI model: ${model}` }),
+        JSON.stringify({ success: false, error: { code: "INVALID_MODEL", message: `Invalid AI model: ${model}` } }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -179,7 +211,10 @@ serve(async (req: Request) => {
       return new Response(
         JSON.stringify({
           success: false,
-          error: `Prompt payload exceeds maximum allowed size of ${MAX_PROMPT_CHARS} characters.`,
+          error: {
+            code: "PAYLOAD_TOO_LARGE",
+            message: `Prompt payload exceeds maximum allowed size of ${MAX_PROMPT_CHARS} characters.`,
+          },
         }),
         {
           status: 413,
@@ -192,7 +227,7 @@ serve(async (req: Request) => {
     const burstCheck = checkBurstLimit(userId);
     if (!burstCheck.allowed) {
       return new Response(
-        JSON.stringify({ success: false, error: burstCheck.error }),
+        JSON.stringify({ success: false, error: { code: "BURST_LIMIT_EXCEEDED", message: burstCheck.error } }),
         {
           status: 429,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -204,8 +239,26 @@ serve(async (req: Request) => {
     let remainingQuota = 0;
     const dailyLimit = TIER_DAILY_LIMITS[tier] || TIER_DAILY_LIMITS.Free;
     const today = new Date().toISOString().split("T")[0];
+    const isProd = Deno.env.get("ENVIRONMENT") === "production";
 
-    if (userId !== "anonymous" && supabaseAdmin) {
+    if (userId === "anonymous") {
+      const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("cf-connecting-ip") || "anon_client";
+      const anonKey = `anon_${clientIp}`;
+      const anonCheck = checkLocalDailyLimit(anonKey, "Anonymous", 2);
+      if (!anonCheck.allowed) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: {
+              code: "ANON_QUOTA_EXCEEDED",
+              message: "Anonymous daily quota reached (2 requests/day). Please sign in to continue using UniAdmission AI.",
+            },
+          }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      remainingQuota = anonCheck.remaining;
+    } else if (supabaseAdmin) {
       try {
         // Attempt atomic single-transaction quota check and increment via PostgreSQL RPC
         const { data: quotaData, error: rpcErr } = await supabaseAdmin.rpc("check_and_increment_ai_quota", {
@@ -221,7 +274,10 @@ serve(async (req: Request) => {
             return new Response(
               JSON.stringify({
                 success: false,
-                error: `Daily AI quota reached (${dailyLimit} requests/day for your ${tier} plan). Please upgrade your plan for higher limits.`,
+                error: {
+                  code: "DAILY_QUOTA_EXCEEDED",
+                  message: `Daily AI quota reached (${dailyLimit} requests/day for your ${tier} plan). Please upgrade your plan for higher limits.`,
+                },
               }),
               {
                 status: 429,
@@ -244,7 +300,10 @@ serve(async (req: Request) => {
             return new Response(
               JSON.stringify({
                 success: false,
-                error: `Daily AI quota reached (${dailyLimit} requests/day for your ${tier} plan). Please upgrade your plan for higher limits.`,
+                error: {
+                  code: "DAILY_QUOTA_EXCEEDED",
+                  message: `Daily AI quota reached (${dailyLimit} requests/day for your ${tier} plan). Please upgrade your plan for higher limits.`,
+                },
               }),
               {
                 status: 429,
@@ -255,23 +314,41 @@ serve(async (req: Request) => {
           remainingQuota = dailyLimit - (currentCount + 1);
         }
       } catch (err: any) {
-        console.warn("[ai_usage_daily] DB lookup failed, falling back to memory:", err?.message);
+        console.error("[ai_usage_daily] Database quota verification error:", err?.message);
+        if (isProd) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: {
+                code: "AI_QUOTA_SERVICE_UNAVAILABLE",
+                message: "AI quota verification is temporarily unavailable. Please try again shortly.",
+              },
+            }),
+            { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
         const memCheck = checkLocalDailyLimit(userId, tier);
         if (!memCheck.allowed) {
-          return new Response(JSON.stringify({ success: false, error: memCheck.error }), {
-            status: 429,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({ success: false, error: { code: "DAILY_QUOTA_EXCEEDED", message: memCheck.error } }),
+            {
+              status: 429,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            }
+          );
         }
         remainingQuota = memCheck.remaining;
       }
     } else {
       const memCheck = checkLocalDailyLimit(userId, tier);
       if (!memCheck.allowed) {
-        return new Response(JSON.stringify({ success: false, error: memCheck.error }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({ success: false, error: { code: "DAILY_QUOTA_EXCEEDED", message: memCheck.error } }),
+          {
+            status: 429,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
       }
       remainingQuota = memCheck.remaining;
     }

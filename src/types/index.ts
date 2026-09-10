@@ -334,13 +334,28 @@ export interface ApplicationChecklistItem {
 
 export type ApplicationStage = 
   | 'Researching'
+  | 'Shortlisted'
   | 'Preparing'
+  | 'Drafting'
   | 'Documents Missing'
   | 'Under Review'
+  | 'Ready for Submission'
   | 'Submitted'
   | 'Accepted'
   | 'Waitlisted'
-  | 'Rejected';
+  | 'Rejected'
+  | 'Enrolled'
+  | 'Deferred';
+
+export interface DeadlineIntelligence {
+  daysRemaining: number;
+  urgencyBand: 'Urgent' | 'Approaching' | 'Upcoming' | 'Future' | 'Passed';
+  urgencyColor: string;
+  isUrgent: boolean;
+  isPassed: boolean;
+  nextRecommendedAction: string;
+  formattedDeadline: string;
+}
 
 export interface ApplicationItem {
   id: string;

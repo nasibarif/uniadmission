@@ -7,7 +7,7 @@
 CREATE TABLE IF NOT EXISTS public.payment_transactions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  provider TEXT NOT NULL DEFAULT 'bkash',
+  provider TEXT NOT NULL DEFAULT 'sslcommerz',
   provider_payment_id TEXT NOT NULL,
   provider_transaction_id TEXT UNIQUE, -- bKash TrxID, guaranteed unique
   customer_account TEXT,               -- bKash sender wallet (01XXXXXXXXX)
@@ -54,7 +54,7 @@ BEGIN
     ALTER TABLE public.subscriptions ADD COLUMN amount_bdt NUMERIC DEFAULT 0;
   END IF;
 
-  ALTER TABLE public.subscriptions ALTER COLUMN payment_provider SET DEFAULT 'bkash';
+  ALTER TABLE public.subscriptions ALTER COLUMN payment_provider SET DEFAULT 'sslcommerz';
   ALTER TABLE public.subscriptions ALTER COLUMN currency SET DEFAULT 'BDT';
 END $$;
 

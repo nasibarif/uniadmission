@@ -82,6 +82,10 @@ interface AppContextType {
   applyValidatedDossier: (dossier: ValidatedDossier, createBackupFirst?: boolean) => void;
   isUpgradeModalOpen: boolean;
   setIsUpgradeModalOpen: (open: boolean) => void;
+  isLegalModalOpen: boolean;
+  setIsLegalModalOpen: (open: boolean) => void;
+  legalModalTab: 'terms' | 'privacy' | 'disclaimer';
+  openLegalModal: (tab?: 'terms' | 'privacy' | 'disclaimer') => void;
   selectedUniversityForModal: University | null;
   setSelectedUniversityForModal: (uni: University | null) => void;
 }
@@ -103,6 +107,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState<boolean>(false);
+  const [isLegalModalOpen, setIsLegalModalOpen] = useState<boolean>(false);
+  const [legalModalTab, setLegalModalTab] = useState<'terms' | 'privacy' | 'disclaimer'>('terms');
+
+  const openLegalModal = (tab: 'terms' | 'privacy' | 'disclaimer' = 'terms') => {
+    setLegalModalTab(tab);
+    setIsLegalModalOpen(true);
+  };
+
   const [selectedUniversityForModal, setSelectedUniversityForModal] = useState<University | null>(null);
 
   // Applications
@@ -485,7 +497,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         storagePath = uploadRes.storagePath;
         mimeType = uploadRes.mimeType;
       } catch (err) {
-        console.warn('[AppContext] Storage upload error:', err);
+        console.error('[AppContext] Storage upload error:', err);
+        throw err;
       }
     }
 
@@ -887,6 +900,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         applyValidatedDossier,
         isUpgradeModalOpen,
         setIsUpgradeModalOpen,
+        isLegalModalOpen,
+        setIsLegalModalOpen,
+        legalModalTab,
+        openLegalModal,
         selectedUniversityForModal,
         setSelectedUniversityForModal
       }}

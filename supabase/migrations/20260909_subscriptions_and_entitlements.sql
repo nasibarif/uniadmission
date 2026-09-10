@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS public.subscriptions (
   current_period_start TIMESTAMPTZ,
   current_period_end TIMESTAMPTZ,
   cancel_at_period_end BOOLEAN DEFAULT FALSE,
-  payment_provider TEXT DEFAULT 'bkash',
+  payment_provider TEXT DEFAULT 'sslcommerz',
   metadata JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL

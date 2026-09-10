@@ -53,11 +53,18 @@ export const ApplicationTracker: React.FC = () => {
 
   const stages: ApplicationStage[] = [
     'Researching',
+    'Shortlisted',
     'Preparing',
+    'Drafting',
     'Documents Missing',
     'Under Review',
+    'Ready for Submission',
     'Submitted',
-    'Accepted'
+    'Accepted',
+    'Waitlisted',
+    'Rejected',
+    'Enrolled',
+    'Deferred'
   ];
 
   const selectedApp = applications.find(a => a.id === selectedAppId) || applications[0];

@@ -24,7 +24,7 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
-  const { activeTab, setActiveTab, userTier, setIsUpgradeModalOpen } = useApp();
+  const { activeTab, setActiveTab, userTier, setIsUpgradeModalOpen, openLegalModal } = useApp();
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard Overview', icon: LayoutDashboard, badge: null, minTier: 'Free' },
@@ -150,6 +150,30 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
           className="text-blue-600 hover:text-blue-700 text-xs font-bold hover:underline"
         >
           Change Plan
+        </button>
+      </div>
+
+      {/* Legal & Non-Guarantee Disclaimers */}
+      <div className="px-3 py-2 border-t border-slate-100 flex items-center justify-center gap-2 text-[10px] text-slate-400 bg-slate-50/30">
+        <button
+          onClick={() => openLegalModal('terms')}
+          className="hover:text-slate-600 hover:underline"
+        >
+          Terms
+        </button>
+        <span>•</span>
+        <button
+          onClick={() => openLegalModal('privacy')}
+          className="hover:text-slate-600 hover:underline"
+        >
+          Privacy
+        </button>
+        <span>•</span>
+        <button
+          onClick={() => openLegalModal('disclaimer')}
+          className="hover:text-slate-600 hover:underline"
+        >
+          Disclaimers
         </button>
       </div>
     </aside>

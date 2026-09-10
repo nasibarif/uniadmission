@@ -208,7 +208,7 @@ export const PortfolioStrategyModal: React.FC<PortfolioStrategyModalProps> = ({ 
         {/* Primary Action Button */}
         <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <p className="text-[11px] text-slate-500">
-            Applying across this balanced portfolio guarantees you do not risk your admission cycle on a single country or hyper-selective cohort.
+            Applying across this balanced portfolio helps mitigate the risk of concentrating your admission cycle on a single country or hyper-selective cohort. Admission is never guaranteed.
           </p>
 
           <button

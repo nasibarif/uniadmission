@@ -41,16 +41,42 @@ export class SslcommerzGateway implements IPaymentGateway {
    * Initiate SSLCOMMERZ V4 Payment Session
    */
   public async createPayment(params: CreatePaymentParams): Promise<CreatePaymentResult> {
+    const getEnv = (key: string): string => {
+      if (typeof Deno !== 'undefined' && Deno.env) return Deno.env.get(key) || '';
+      if (typeof process !== 'undefined' && process.env) return process.env[key] || '';
+      return '';
+    };
+
+    const allowSimulation = getEnv('ALLOW_PAYMENT_SIMULATION') === 'true';
+    const isProduction = getEnv('ENVIRONMENT') === 'production';
+
     if (!this.storeId || !this.storePassword) {
-      console.warn('[SSLCOMMERZ] Credentials not configured. Using sandbox simulation.');
-      // Sandbox fallback simulator URL when keys are not set
-      const simUrl = `${params.successUrl}?simulated=true&tran_id=${params.merchantTransactionId}&val_id=SIM_VAL_${Date.now()}`;
+      if (allowSimulation && !isProduction) {
+        console.warn('[SSLCOMMERZ] Development simulation active: credentials unset.');
+        const simUrl = `${params.successUrl}?simulated=true&tran_id=${params.merchantTransactionId}&val_id=SIM_VAL_${Date.now()}`;
+        return {
+          success: true,
+          provider: this.provider,
+          merchantTransactionId: params.merchantTransactionId,
+          checkoutUrl: simUrl,
+          sessionKey: `SIM_SESSION_${Date.now()}`,
+        };
+      }
       return {
-        success: true,
+        success: false,
         provider: this.provider,
         merchantTransactionId: params.merchantTransactionId,
-        checkoutUrl: simUrl,
-        sessionKey: `SIM_SESSION_${Date.now()}`,
+        error: 'SSLCOMMERZ store credentials not configured on the server. Please set SSLCOMMERZ_STORE_ID and SSLCOMMERZ_STORE_PASSWORD.',
+      };
+    }
+
+    // Require valid customer data (reject fake data defaults)
+    if (!params.customerName || !params.customerEmail) {
+      return {
+        success: false,
+        provider: this.provider,
+        merchantTransactionId: params.merchantTransactionId,
+        error: 'Missing required customer contact details (name and email are required for checkout).',
       };
     }
 
@@ -67,12 +93,12 @@ export class SslcommerzGateway implements IPaymentGateway {
       payload.append('ipn_url', params.ipnUrl);
 
       // Customer details (server authoritative)
-      payload.append('cus_name', params.customerName || 'UniAdmission Student');
-      payload.append('cus_email', params.customerEmail || 'student@uniadmission.com');
-      payload.append('cus_add1', params.customerAddress || 'Dhaka');
-      payload.append('cus_city', params.customerCity || 'Dhaka');
+      payload.append('cus_name', params.customerName.trim());
+      payload.append('cus_email', params.customerEmail.trim());
+      payload.append('cus_add1', params.customerAddress?.trim() || 'Dhaka');
+      payload.append('cus_city', params.customerCity?.trim() || 'Dhaka');
       payload.append('cus_country', 'Bangladesh');
-      payload.append('cus_phone', params.customerPhone || '01700000000');
+      payload.append('cus_phone', params.customerPhone?.trim() || '01700000000');
 
       // Product details
       payload.append('product_name', params.planName);
@@ -138,21 +164,47 @@ export class SslcommerzGateway implements IPaymentGateway {
   public async verifyPayment(params: VerifyPaymentParams): Promise<VerifyPaymentResult> {
     const { validationId, merchantTransactionId, expectedAmount, expectedCurrency } = params;
 
-    // Support simulated sandbox validation when credentials are missing
-    if (!this.storeId || !this.storePassword) {
-      if (validationId.startsWith('SIM_VAL_') || validationId === 'SANDBOX_VALID') {
+    const getEnv = (key: string): string => {
+      if (typeof Deno !== 'undefined' && Deno.env) return Deno.env.get(key) || '';
+      if (typeof process !== 'undefined' && process.env) return process.env[key] || '';
+      return '';
+    };
+
+    const allowSimulation = getEnv('ALLOW_PAYMENT_SIMULATION') === 'true';
+    const isProduction = getEnv('ENVIRONMENT') === 'production';
+
+    // Simulated sandbox validation is ONLY permitted when explicitly enabled in development
+    if (validationId.startsWith('SIM_VAL_') || validationId === 'SANDBOX_VALID') {
+      if (allowSimulation && !isProduction) {
         return {
           isValid: true,
           status: 'success',
           merchantTransactionId,
           validationId,
           providerTransactionId: `SIM_BANK_${Date.now()}`,
-          paymentMethod: 'SSLCOMMERZ-Sandbox',
+          paymentMethod: 'SSLCOMMERZ-DevSandbox',
           amount: expectedAmount,
           currency: expectedCurrency,
           cardType: 'SSLCOMMERZ-BKASH',
         };
       }
+      return {
+        isValid: false,
+        status: 'failed',
+        merchantTransactionId,
+        validationId,
+        error: 'Simulated payment verification is strictly forbidden in production or without explicit dev flag.',
+      };
+    }
+
+    if (!this.storeId || !this.storePassword) {
+      return {
+        isValid: false,
+        status: 'failed',
+        merchantTransactionId,
+        validationId,
+        error: 'SSLCOMMERZ store credentials not configured. Verification failed closed.',
+      };
     }
 
     try {

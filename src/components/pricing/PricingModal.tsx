@@ -6,7 +6,7 @@ import { Check, Zap, Sparkles, Building, Crown, Shield, AlertCircle, RefreshCw, 
 import { PLAN_PRICING_BDT } from '../../services/paymentService';
 
 export const PricingModal: React.FC = () => {
-  const { isUpgradeModalOpen, setIsUpgradeModalOpen, userTier, currentUser, initiateCheckout } = useApp();
+  const { isUpgradeModalOpen, setIsUpgradeModalOpen, userTier, currentUser, initiateCheckout, openLegalModal } = useApp();
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [loadingTier, setLoadingTier] = useState<UserTier | null>(null);
 
@@ -251,7 +251,7 @@ export const PricingModal: React.FC = () => {
           </span>
         </div>
         <span className="text-[11px] text-neutral-500 whitespace-nowrap">
-          7-day satisfaction guarantee • No foreign currency markups
+          7-day satisfaction guarantee • <button onClick={() => openLegalModal('terms')} className="text-blue-600 hover:underline">Terms & Privacy</button>
         </span>
       </div>
     </Modal>

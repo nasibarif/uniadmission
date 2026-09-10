@@ -20,13 +20,21 @@ import { AdminDashboard } from './components/admin/AdminDashboard';
 import { SchoolCounselorPortal } from './components/b2b/SchoolCounselorPortal';
 import { PricingModal } from './components/pricing/PricingModal';
 import { AiQuotaModal } from './components/common/AiQuotaModal';
+import { LegalModal } from './components/legal/LegalModal';
 import { AuthLanding } from './components/auth/AuthLanding';
 import { PaymentSuccess } from './components/payment/PaymentSuccess';
 import { PaymentFailed } from './components/payment/PaymentFailed';
 import { PaymentCancelled } from './components/payment/PaymentCancelled';
 
 const MainLayout: React.FC = () => {
-  const { activeTab, setActiveTab, currentUser } = useApp();
+  const { 
+    activeTab, 
+    setActiveTab, 
+    currentUser, 
+    isLegalModalOpen, 
+    setIsLegalModalOpen, 
+    legalModalTab 
+  } = useApp();
   const [isAiQuotaModalOpen, setIsAiQuotaModalOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -137,6 +145,11 @@ const MainLayout: React.FC = () => {
       <AiQuotaModal
         isOpen={isAiQuotaModalOpen}
         onClose={() => setIsAiQuotaModalOpen(false)}
+      />
+      <LegalModal
+        isOpen={isLegalModalOpen}
+        onClose={() => setIsLegalModalOpen(false)}
+        defaultTab={legalModalTab}
       />
     </div>
   );

@@ -25,7 +25,6 @@ export function getPaymentGateway(providerOverride?: string): IPaymentGateway {
       throw new Error("Provider 'shurjopay' is registered in architecture but not yet configured. Please set PAYMENT_GATEWAY=sslcommerz.");
 
     default:
-      console.warn(`[Payment Gateway Factory] Unknown provider '${provider}', falling back to 'sslcommerz'`);
-      return new SslcommerzGateway();
+      throw new Error(`Unsupported or unconfigured payment provider '${provider}'. Supported gateways: 'sslcommerz'.`);
   }
 }
