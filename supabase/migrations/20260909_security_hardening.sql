@@ -81,25 +81,27 @@ VALUES (
   'documents',
   'documents',
   false,
-  10485760, -- 10MB
+  20971520, -- 20MB
   ARRAY[
     'application/pdf',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'application/msword',
     'image/jpeg',
     'image/png',
+    'image/webp',
     'text/plain'
   ]
 )
 ON CONFLICT (id) DO UPDATE SET
   public = false,
-  file_size_limit = 10485760,
+  file_size_limit = 20971520,
   allowed_mime_types = ARRAY[
     'application/pdf',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'application/msword',
     'image/jpeg',
     'image/png',
+    'image/webp',
     'text/plain'
   ];
 

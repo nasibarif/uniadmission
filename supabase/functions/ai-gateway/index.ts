@@ -287,7 +287,26 @@ serve(async (req: Request) => {
           }
           remainingQuota = quotaData.remaining ?? Math.max(0, dailyLimit - (quotaData.count || 1));
         } else {
-          // Graceful fallback to persistent table lookup if RPC not present in environment
+          // PRODUCTION FAIL-CLOSED (Error 7 & 8):
+          // In production, never perform non-atomic table queries or memory fallbacks. Fail closed immediately.
+          if (isProd) {
+            console.error("[ai-gateway] check_and_increment_ai_quota failed in production:", rpcErr?.message);
+            return new Response(
+              JSON.stringify({
+                success: false,
+                error: {
+                  code: "AI_QUOTA_SERVICE_UNAVAILABLE",
+                  message: "AI quota verification service is temporarily unavailable. Please try again shortly.",
+                },
+              }),
+              {
+                status: 503,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              }
+            );
+          }
+
+          // Development-only fallback to persistent table lookup
           const { data: usageRow } = await supabaseAdmin
             .from("ai_usage_daily")
             .select("request_count")
@@ -340,6 +359,18 @@ serve(async (req: Request) => {
         remainingQuota = memCheck.remaining;
       }
     } else {
+      if (isProd) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: {
+              code: "AI_QUOTA_SERVICE_UNAVAILABLE",
+              message: "AI quota verification service is unconfigured in production environment.",
+            },
+          }),
+          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
       const memCheck = checkLocalDailyLimit(userId, tier);
       if (!memCheck.allowed) {
         return new Response(

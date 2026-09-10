@@ -161,4 +161,28 @@ export class SubscriptionService {
 
     return currentWeight >= requiredWeight;
   }
+
+  /**
+   * Admin-only: Fetch authoritative subscriptions directly from the canonical database subscriptions table (Error 12).
+   */
+  public static async getAllSubscriptions(): Promise<any[]> {
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('subscriptions')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && data) {
+          return data;
+        }
+        if (error) {
+          console.warn('[SubscriptionService] Could not fetch subscriptions:', error.message);
+        }
+      } catch (err) {
+        console.warn('[SubscriptionService] Error fetching subscriptions:', err);
+      }
+    }
+    return [];
+  }
 }

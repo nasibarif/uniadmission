@@ -71,12 +71,12 @@ export class SslcommerzGateway implements IPaymentGateway {
     }
 
     // Require valid customer data (reject fake data defaults)
-    if (!params.customerName || !params.customerEmail) {
+    if (!params.customerName || !params.customerEmail || !params.customerPhone) {
       return {
         success: false,
         provider: this.provider,
         merchantTransactionId: params.merchantTransactionId,
-        error: 'Missing required customer contact details (name and email are required for checkout).',
+        error: 'Missing required customer contact details (name, email, and phone are required for checkout).',
       };
     }
 
@@ -92,13 +92,13 @@ export class SslcommerzGateway implements IPaymentGateway {
       payload.append('cancel_url', params.cancelUrl);
       payload.append('ipn_url', params.ipnUrl);
 
-      // Customer details (server authoritative)
+      // Customer details (server authoritative, zero fake defaults)
       payload.append('cus_name', params.customerName.trim());
       payload.append('cus_email', params.customerEmail.trim());
-      payload.append('cus_add1', params.customerAddress?.trim() || 'Dhaka');
-      payload.append('cus_city', params.customerCity?.trim() || 'Dhaka');
+      payload.append('cus_add1', params.customerAddress?.trim() || 'Bangladesh');
+      payload.append('cus_city', params.customerCity?.trim() || 'Bangladesh');
       payload.append('cus_country', 'Bangladesh');
-      payload.append('cus_phone', params.customerPhone?.trim() || '01700000000');
+      payload.append('cus_phone', params.customerPhone.trim());
 
       // Product details
       payload.append('product_name', params.planName);

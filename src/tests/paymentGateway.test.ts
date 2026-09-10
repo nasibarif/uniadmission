@@ -641,4 +641,100 @@ describe('Payment Gateway Architecture & SSLCOMMERZ Suite', () => {
       expect(content).toContain('Privacy & Data Protection Policy');
     });
   });
+
+  // ==========================================================================
+  // 13. Production Fixations v3 Compliance Audit
+  // ==========================================================================
+  describe('13. Production Fixations v3 Hardening & Security Audit', () => {
+    it('should verify migration 20260910_payment_and_quota_hardening_v3.sql fulfills database requirements', () => {
+      const v3MigrationPath = path.join(rootDir, 'supabase/migrations/20260910_payment_and_quota_hardening_v3.sql');
+      expect(fs.existsSync(v3MigrationPath)).toBe(true);
+
+      const sql = fs.readFileSync(v3MigrationPath, 'utf8');
+
+      // Authoritative subscription_plans table & seeds
+      expect(sql).toContain('CREATE TABLE IF NOT EXISTS public.subscription_plans');
+      expect(sql).toContain('plan_id TEXT PRIMARY KEY');
+      expect(sql).toContain('duration_days INTEGER NOT NULL');
+      expect(sql).toContain("('Free', 'Free Starter', 0, 'BDT', 0, true)");
+      expect(sql).toContain("('Explorer', 'Explorer Tier', 1490, 'BDT', 365, true)");
+      expect(sql).toContain("('Application', 'Application Assistant', 3990, 'BDT', 365, true)");
+      expect(sql).toContain("('Complete', 'Complete Admissions Suite', 7990, 'BDT', 365, true)");
+      expect(sql).toContain("('School', 'Institutional & School Portal', 19990, 'BDT', 365, true)");
+
+      // fulfill_payment_transaction derives duration from subscription_plans (no p_duration_days argument)
+      expect(sql).toContain('CREATE OR REPLACE FUNCTION public.fulfill_payment_transaction');
+      expect(sql).toContain('FROM public.subscription_plans');
+      expect(sql).toContain('DROP FUNCTION IF EXISTS public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB, INTEGER);');
+
+      // Privileges revoked from PUBLIC, anon, authenticated; granted strictly to service_role
+      expect(sql).toContain('REVOKE EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB) FROM PUBLIC;');
+      expect(sql).toContain('REVOKE EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB) FROM anon;');
+      expect(sql).toContain('REVOKE EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB) FROM authenticated;');
+      expect(sql).toContain('GRANT EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB) TO service_role;');
+
+      // 20MB bucket limit alignment and webp support
+      expect(sql).toContain('file_size_limit = 20971520');
+      expect(sql).toContain("'image/webp'");
+    });
+
+    it('should verify payments Edge Function fulfills single-path fulfillment without manual fallbacks', () => {
+      const edgePath = path.join(rootDir, 'supabase/functions/payments/index.ts');
+      const code = fs.readFileSync(edgePath, 'utf8');
+
+      // Single path RPC fulfillment
+      expect(code).toContain('fulfill_payment_transaction');
+      expect(code).not.toContain('p_duration_days');
+      expect(code).not.toContain('falling back to direct db queries');
+
+      // Zero fake customer fallbacks
+      expect(code).not.toContain('01700000000');
+      expect(code).toContain('CUSTOMER_PROFILE_INCOMPLETE');
+
+      // Strict CORS & trusted callback URLs
+      expect(code).toContain('APP_ALLOWED_ORIGINS');
+      expect(code).toContain('PAYMENT_CALLBACK_BASE_URL');
+      expect(code).not.toContain('${url.origin}/payments/callback');
+    });
+
+    it('should verify SSLCOMMERZ gateway adapter enforces real customer phone with zero fake defaults', () => {
+      const sslPath = path.join(rootDir, 'supabase/functions/_shared/payment/sslcommerz.ts');
+      const code = fs.readFileSync(sslPath, 'utf8');
+
+      expect(code).not.toContain('01700000000');
+      expect(code).toContain('!params.customerPhone');
+    });
+
+    it('should verify AI gateway fails closed in production when quota service is unavailable', () => {
+      const aiPath = path.join(rootDir, 'supabase/functions/ai-gateway/index.ts');
+      const code = fs.readFileSync(aiPath, 'utf8');
+
+      expect(code).toContain('AI_QUOTA_SERVICE_UNAVAILABLE');
+      expect(code).toContain('check_and_increment_ai_quota failed in production');
+      expect(code).toContain('status: 503');
+    });
+
+    it('should verify storage service uploads to cloud first before caching and uses 15-minute signed URLs', () => {
+      const storagePath = path.join(rootDir, 'src/services/storageService.ts');
+      const code = fs.readFileSync(storagePath, 'utf8');
+
+      // Cloud upload occurs before saveFileToIndexedDB
+      const uploadIdx = code.indexOf('supabase.storage');
+      const cacheIdx = code.indexOf('saveFileToIndexedDB(storagePath');
+      expect(uploadIdx).toBeGreaterThan(0);
+      expect(cacheIdx).toBeGreaterThan(uploadIdx);
+
+      // Short-lived signed URLs (900 seconds = 15 min)
+      expect(code).toContain('.createSignedUrl(storagePath, 900)');
+    });
+
+    it('should verify Admin Dashboard queries authoritative subscriptions independently of transactions', () => {
+      const adminPath = path.join(rootDir, 'src/components/admin/AdminDashboard.tsx');
+      const code = fs.readFileSync(adminPath, 'utf8');
+
+      expect(code).toContain('SubscriptionService');
+      expect(code).toContain('SubscriptionService.getAllSubscriptions()');
+      expect(code).toContain("subscriptions.filter(s => s.status === 'active')");
+    });
+  });
 });

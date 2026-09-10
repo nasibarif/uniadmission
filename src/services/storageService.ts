@@ -156,10 +156,8 @@ export class StorageService {
     const storagePath = this.buildStoragePath(userId, docId, file.name, version);
     const mimeType = file.type || 'application/octet-stream';
 
-    // Always mirror in IndexedDB so preview/download is instantaneously available locally
-    await saveFileToIndexedDB(storagePath, file, file.name, mimeType);
-
-    // If Supabase is connected, upload to the private 'documents' bucket
+    // 3. PERSISTENCE INVERSION (Error 13):
+    // Upload to authoritative Supabase Storage FIRST. Never cache in IndexedDB before persistent upload confirmation.
     if (isSupabaseConfigured() && supabase) {
       try {
         const { error } = await supabase.storage
@@ -170,16 +168,17 @@ export class StorageService {
           });
 
         if (error) {
-          // Cleanup IndexedDB on upload failure so state stays consistent
-          await deleteFileFromIndexedDB(storagePath);
           throw new Error(`Cloud document storage upload failed: ${error.message}`);
         }
       } catch (err: any) {
-        // Cleanup IndexedDB on upload failure
+        // Ensure no phantom entry is created on failure
         await deleteFileFromIndexedDB(storagePath);
         throw new Error(err?.message || 'Cloud storage upload exception occurred.');
       }
     }
+
+    // 4. Update local client cache ONLY after cloud confirmation (or in offline mode)
+    await saveFileToIndexedDB(storagePath, file, file.name, mimeType);
 
     return {
       storagePath,
@@ -189,18 +188,18 @@ export class StorageService {
   }
 
   /**
-   * Generates a signed, short-lived URL (1 hour) for secure download or preview.
+   * Generates a signed, short-lived URL (15 minutes, Error 36) for secure download or preview.
    * Returns a local blob URL if stored in IndexedDB.
    */
   public static async getSignedOrPreviewUrl(storagePath: string): Promise<string | null> {
     if (!storagePath) return null;
 
-    // 1. Try Supabase Storage signed URL if configured
+    // 1. Try Supabase Storage signed URL if configured (short-lived 15 minutes = 900s)
     if (isSupabaseConfigured() && supabase) {
       try {
         const { data, error } = await supabase.storage
           .from(BUCKET_NAME)
-          .createSignedUrl(storagePath, 3600); // 1 hour expiry
+          .createSignedUrl(storagePath, 900); // 15-minute expiry
 
         if (!error && data?.signedUrl) {
           return data.signedUrl;

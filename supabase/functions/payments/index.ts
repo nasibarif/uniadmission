@@ -9,18 +9,30 @@ import { getPlanConfig } from "../_shared/payment/catalog.ts";
 
 function getCorsHeaders(req: Request) {
   const origin = req.headers.get("origin") || "";
+  const allowedOriginsEnv = Deno.env.get("APP_ALLOWED_ORIGINS") || "";
+  const configuredOrigins = allowedOriginsEnv
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+
   const appBaseUrl = Deno.env.get("APP_BASE_URL") || "";
+  const paymentCallbackBaseUrl = Deno.env.get("PAYMENT_CALLBACK_BASE_URL") || "";
+
   const allowedOrigins = [
+    ...configuredOrigins,
     appBaseUrl,
+    paymentCallbackBaseUrl,
     "https://uniadmission.com",
     "https://uniadmission.vercel.app",
   ].filter(Boolean);
 
-  const isDev = Deno.env.get("ENVIRONMENT") === "development" || !Deno.env.get("ENVIRONMENT");
-  const isAllowed = allowedOrigins.includes(origin) || (isDev && origin.startsWith("http://localhost"));
+  const isDev = Deno.env.get("ENVIRONMENT") === "development";
+  const isAllowed = Boolean(origin) && (
+    allowedOrigins.includes(origin) || (isDev && origin.startsWith("http://localhost"))
+  );
 
   return {
-    "Access-Control-Allow-Origin": isAllowed ? origin : (allowedOrigins[0] || "*"),
+    "Access-Control-Allow-Origin": isAllowed ? origin : "",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Vary": "Origin",
@@ -46,7 +58,11 @@ serve(async (req: Request) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
   const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-  const appBaseUrl = (Deno.env.get("APP_BASE_URL") || url.origin).replace(/\/+$/, "");
+  const appBaseUrl = (
+    Deno.env.get("PAYMENT_CALLBACK_BASE_URL") ||
+    Deno.env.get("APP_BASE_URL") ||
+    "https://uniadmission.com"
+  ).replace(/\/+$/, "");
 
   // Authenticate user identity strictly from JWT
   async function getAuthenticatedUser(req: Request) {
@@ -72,104 +88,35 @@ serve(async (req: Request) => {
   const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
   const gateway = getPaymentGateway();
 
+  // SINGLE PATH ATOMIC FULFILLMENT:
+  // All payment fulfillments route strictly and exclusively through PostgreSQL RPC fulfill_payment_transaction.
+  // There is NO duplicate manual mutation fallback. Duration is derived server-side from subscription_plans.
   async function fulfillPayment(
     merchantTransactionId: string,
     valId: string,
     providerTransactionId: string,
     paymentMethod: string,
-    gatewayResponse: any,
-    durationDays: number = 365
+    gatewayResponse: any
   ) {
-    try {
-      const { data, error } = await supabaseAdmin.rpc("fulfill_payment_transaction", {
-        p_merchant_transaction_id: merchantTransactionId,
-        p_provider_validation_id: valId,
-        p_provider_transaction_id: providerTransactionId,
-        p_payment_method: paymentMethod,
-        p_gateway_response: gatewayResponse || {},
-        p_duration_days: durationDays,
-      });
-
-      if (!error && data) {
-        return data;
-      }
-      if (error) {
-        console.warn("[RPC fulfill_payment_transaction failed or not installed, falling back to direct db queries]:", error.message);
-      }
-    } catch (rpcErr: any) {
-      console.warn("[RPC fulfill_payment_transaction exception]:", rpcErr?.message);
-    }
-
-    // Direct Database Fallback (State Machine & Single Active Subscription Enforcement)
-    const verifiedAt = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + durationDays * 86400000).toISOString();
-
-    const { data: localTx } = await supabaseAdmin
-      .from("payment_transactions")
-      .select("*")
-      .eq("merchant_transaction_id", merchantTransactionId)
-      .maybeSingle();
-
-    if (!localTx) {
-      throw new Error("Transaction not found for fulfillment");
-    }
-
-    if (localTx.status === "success" || localTx.status === "completed") {
-      return { success: true, already_fulfilled: true, transaction_id: merchantTransactionId };
-    }
-
-    if (!["initiated", "pending", "processing"].includes(localTx.status)) {
-      throw new Error(`Invalid payment state transition from ${localTx.status} to success`);
-    }
-
-    await supabaseAdmin
-      .from("payment_transactions")
-      .update({
-        status: "success",
-        provider_validation_id: valId,
-        provider_transaction_id: providerTransactionId,
-        payment_method: paymentMethod,
-        gateway_response: gatewayResponse || {},
-        verified_at: verifiedAt,
-        updated_at: verifiedAt,
-      })
-      .eq("id", localTx.id);
-
-    // Single active subscription enforcement: expire existing active subscriptions
-    await supabaseAdmin
-      .from("subscriptions")
-      .update({ status: "expired", updated_at: verifiedAt })
-      .eq("user_id", localTx.user_id)
-      .eq("status", "active");
-
-    await supabaseAdmin.from("subscriptions").insert({
-      user_id: localTx.user_id,
-      plan_id: localTx.plan_id,
-      status: "active",
-      payment_transaction_id: localTx.id,
-      provider: localTx.provider || "sslcommerz",
-      payment_provider: localTx.provider || "sslcommerz",
-      amount_bdt: localTx.amount,
-      currency: localTx.currency,
-      subscription_id: merchantTransactionId,
-      starts_at: verifiedAt,
-      expires_at: expiresAt,
-      current_period_start: verifiedAt,
-      current_period_end: expiresAt,
-      metadata: {
-        validationId: valId,
-        providerTransactionId,
-        paymentMethod,
-      },
-      updated_at: verifiedAt,
+    const { data, error } = await supabaseAdmin.rpc("fulfill_payment_transaction", {
+      p_merchant_transaction_id: merchantTransactionId,
+      p_provider_validation_id: valId,
+      p_provider_transaction_id: providerTransactionId,
+      p_payment_method: paymentMethod,
+      p_gateway_response: gatewayResponse || {},
     });
 
-    await supabaseAdmin
-      .from("profiles")
-      .update({ tier: localTx.plan_id, updated_at: verifiedAt })
-      .eq("id", localTx.user_id);
+    if (error) {
+      console.error("[RPC fulfill_payment_transaction error]:", error);
+      throw new Error(`Payment fulfillment failed: ${error.message}`);
+    }
 
-    return { success: true, already_fulfilled: false, transaction_id: merchantTransactionId };
+    if (!data?.success) {
+      console.error("[RPC fulfill_payment_transaction rejection]:", data);
+      throw new Error(data?.error || "Payment fulfillment failed in database");
+    }
+
+    return data;
   }
 
   try {
@@ -231,23 +178,29 @@ serve(async (req: Request) => {
       const customerEmail = (user.email || profile?.personal?.email || profile?.email || "").trim();
       const customerPhone = (profile?.personal?.phone || user.phone || "").trim();
 
-      if (!customerName || !customerEmail) {
+      if (!customerName || !customerEmail || !customerPhone) {
         return new Response(
           JSON.stringify({
             error: {
-              code: "MISSING_CUSTOMER_PROFILE",
-              message: "Please complete your profile name and email before proceeding to payment checkout.",
+              code: "CUSTOMER_PROFILE_INCOMPLETE",
+              message: "Please complete your profile name, email, and phone number before proceeding to payment checkout.",
             },
           }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      // Construct callback and webhook URLs
-      const successCallbackUrl = `${url.origin}/payments/callback/sslcommerz/success`;
-      const failCallbackUrl = `${url.origin}/payments/callback/sslcommerz/fail`;
-      const cancelCallbackUrl = `${url.origin}/payments/callback/sslcommerz/cancel`;
-      const ipnWebhookUrl = `${url.origin}/payments/webhook/sslcommerz`;
+      // Trusted callback base and backend webhook URLs (Error 9)
+      const backendBaseUrl = (
+        Deno.env.get("PAYMENT_BACKEND_BASE_URL") ||
+        (supabaseUrl ? `${supabaseUrl.replace(/\/+$/, "")}/functions/v1` : "") ||
+        appBaseUrl
+      ).replace(/\/+$/, "");
+
+      const successCallbackUrl = `${backendBaseUrl}/payments/callback/sslcommerz/success`;
+      const failCallbackUrl = `${backendBaseUrl}/payments/callback/sslcommerz/fail`;
+      const cancelCallbackUrl = `${backendBaseUrl}/payments/callback/sslcommerz/cancel`;
+      const ipnWebhookUrl = `${backendBaseUrl}/payments/webhook/sslcommerz`;
 
       // 1. Record transaction in database in 'initiated' status before redirecting to gateway
       const { data: txRecord, error: dbError } = await supabaseAdmin
@@ -278,7 +231,7 @@ serve(async (req: Request) => {
         );
       }
 
-      // 2. Call Gateway Abstraction (e.g. SSLCOMMERZ)
+      // 2. Call Gateway Abstraction (e.g. SSLCOMMERZ) with verified customer data
       const gatewayResult = await gateway.createPayment({
         merchantTransactionId,
         amount: plan.amount,
@@ -288,7 +241,9 @@ serve(async (req: Request) => {
         userId: user.id,
         customerName,
         customerEmail,
-        customerPhone: customerPhone || "01700000000",
+        customerPhone,
+        customerAddress: profile?.personal?.address || undefined,
+        customerCity: profile?.personal?.city || undefined,
         successUrl: successCallbackUrl,
         failUrl: failCallbackUrl,
         cancelUrl: cancelCallbackUrl,
@@ -394,16 +349,12 @@ serve(async (req: Request) => {
       });
 
       if (verifyResult.isValid && verifyResult.status === "success") {
-        const plan = getPlanConfig(localTx.plan_id);
-        const durationDays = plan?.durationDays || (localTx.metadata?.durationDays ? Number(localTx.metadata.durationDays) : 365);
-
         await fulfillPayment(
           tranId,
           valId || verifyResult.validationId || "",
           verifyResult.providerTransactionId || "",
           verifyResult.paymentMethod || "UNKNOWN",
-          verifyResult.rawResponse || bodyData,
-          durationDays
+          verifyResult.rawResponse || bodyData
         );
 
         return Response.redirect(`${appBaseUrl}/#/payment/success?tran_id=${tranId}`, 303);
@@ -546,16 +497,12 @@ serve(async (req: Request) => {
       });
 
       if (verifyResult.isValid && verifyResult.status === "success") {
-        const plan = getPlanConfig(localTx.plan_id);
-        const durationDays = plan?.durationDays || (localTx.metadata?.durationDays ? Number(localTx.metadata.durationDays) : 365);
-
         await fulfillPayment(
           tranId,
           valId,
           verifyResult.providerTransactionId || "",
           verifyResult.paymentMethod || "UNKNOWN",
-          verifyResult.rawResponse || bodyData,
-          durationDays
+          verifyResult.rawResponse || bodyData
         );
 
         return new Response(JSON.stringify({ success: true, status: "verified" }), {
