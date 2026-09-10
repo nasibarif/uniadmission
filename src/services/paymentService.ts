@@ -93,8 +93,10 @@ export class PaymentService {
         return {
           success: true,
           provider: data.provider || 'sslcommerz',
+          paymentId: data.paymentId || data.transactionId,
+          gatewayUrl: data.gatewayUrl || data.checkoutUrl,
           transactionId: data.transactionId,
-          checkoutUrl: data.checkoutUrl,
+          checkoutUrl: data.checkoutUrl || data.gatewayUrl,
           amount: data.amount,
           currency: data.currency || 'BDT',
           planId: data.planId || planId,

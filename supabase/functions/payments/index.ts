@@ -180,6 +180,8 @@ serve(async (req: Request) => {
         JSON.stringify({
           success: true,
           provider: gateway.provider,
+          paymentId: txRecord.id,
+          gatewayUrl: gatewayResult.checkoutUrl,
           transactionId: merchantTransactionId,
           checkoutUrl: gatewayResult.checkoutUrl,
           amount: plan.amount,
@@ -482,7 +484,13 @@ serve(async (req: Request) => {
     // --------------------------------------------------------------------------
     // 6. GET /status: Query Transaction Status
     // --------------------------------------------------------------------------
-    if (path === "/status" || path === "/payment-status") {
+    // --------------------------------------------------------------------------
+    // 6. GET /status or GET /:id: Query Transaction Status
+    // --------------------------------------------------------------------------
+    const singleIdMatch = path.match(/^\/([a-zA-Z0-9_-]+)$/);
+    const isSingleIdRoute = singleIdMatch && !["create", "create-payment", "callback", "webhook", "ipn", "status", "payment-status", "entitlements", "my-entitlement"].includes(singleIdMatch[1]);
+
+    if (path === "/status" || path === "/payment-status" || isSingleIdRoute) {
       if (req.method !== "GET") {
         return new Response(JSON.stringify({ error: "Method not allowed" }), {
           status: 405,
@@ -498,10 +506,10 @@ serve(async (req: Request) => {
         );
       }
 
-      const txId = url.searchParams.get("transactionId") || url.searchParams.get("tran_id") || "";
+      const txId = (isSingleIdRoute ? singleIdMatch[1] : null) || url.searchParams.get("transactionId") || url.searchParams.get("tran_id") || url.searchParams.get("id") || "";
       if (!txId) {
         return new Response(
-          JSON.stringify({ success: false, error: "Missing required parameter: transactionId" }),
+          JSON.stringify({ success: false, error: "Missing required parameter: transactionId or id" }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -524,6 +532,7 @@ serve(async (req: Request) => {
       return new Response(
         JSON.stringify({
           success: true,
+          paymentId: tx.id,
           transactionId: tx.merchant_transaction_id,
           status: tx.status,
           planId: tx.plan_id,

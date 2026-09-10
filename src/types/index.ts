@@ -576,6 +576,8 @@ export interface PaymentTransaction {
 export interface CreatePaymentSessionResponse {
   success: boolean;
   provider?: string;
+  paymentId?: string;
+  gatewayUrl?: string;
   transactionId?: string;
   checkoutUrl?: string;
   amount?: number;

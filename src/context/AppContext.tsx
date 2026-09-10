@@ -98,7 +98,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [profile, setProfile] = useState<StudentProfile>(SAMPLE_PROFILES[0].profile);
 
   const [userTier, setUserTier] = useState<UserTier>(() => {
-    return currentUser?.tier || 'Explorer';
+    return currentUser?.tier || 'Free';
   });
 
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -169,7 +169,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setProfile(data.profile);
           setApplications(data.applications || []);
           setVaultDocuments(data.vaultDocuments || []);
-          setUserTier(data.account.tier || 'Explorer');
+          setUserTier((data.account.tier as UserTier) || 'Free');
         }
         isDataLoadedRef.current = true;
       });

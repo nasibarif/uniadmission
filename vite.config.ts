@@ -141,7 +141,7 @@ function localSecurityAndGatewayPlugin(): Plugin {
             // Derive user identity and tier strictly on the server from session / dev subscriptions
             const authHeader = (req.headers['authorization'] as string) || '';
             const userId = authHeader.replace(/^Bearer\s+/i, '') || 'current-user';
-            const tier = devSubscriptions.get(userId)?.tier || 'Explorer';
+            const tier = devSubscriptions.get(userId)?.tier || 'Free';
 
             // Server-side Input Validation
             if (!ALLOWED_ACTIONS.has(action)) {
@@ -295,6 +295,8 @@ function localSecurityAndGatewayPlugin(): Plugin {
             res.end(JSON.stringify({
               success: true,
               provider: 'sslcommerz',
+              paymentId: merchantTransactionId,
+              gatewayUrl: `/#/payment/success?tran_id=${merchantTransactionId}`,
               transactionId: merchantTransactionId,
               checkoutUrl: `/#/payment/success?tran_id=${merchantTransactionId}`,
               amount,
@@ -308,45 +310,49 @@ function localSecurityAndGatewayPlugin(): Plugin {
         });
       });
 
-      // GET /api/payments/status
-      server.middlewares.use('/api/payments/status', (req, res) => {
-        res.setHeader('Content-Type', 'application/json');
-        res.setHeader('Access-Control-Allow-Origin', '*');
-
+      // GET /api/payments/status and GET /api/payments/:id
+      server.middlewares.use((req, res, next) => {
         const url = new URL(req.url || '', 'http://localhost');
-        const txId = url.searchParams.get('transactionId') || url.searchParams.get('tran_id') || '';
+        const match = url.pathname.match(/^\/api\/payments\/([a-zA-Z0-9_-]+)$/);
+        const isStatusUrl = url.pathname === '/api/payments/status';
 
-        const tx = devPaymentTransactions.get(txId);
-        if (tx) {
-          res.statusCode = 200;
+        if (isStatusUrl || (match && !['create', 'entitlements'].includes(match[1]))) {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+
+          const txId = (match && match[1] !== 'status' ? match[1] : null) || 
+                       url.searchParams.get('transactionId') || 
+                       url.searchParams.get('tran_id') || 
+                       url.searchParams.get('id') || '';
+
+          const tx = devPaymentTransactions.get(txId);
+          if (tx) {
+            res.statusCode = 200;
+            res.end(JSON.stringify({
+              success: true,
+              paymentId: tx.merchantTransactionId,
+              transactionId: tx.merchantTransactionId,
+              status: tx.status,
+              planId: tx.planId,
+              amount: tx.amount,
+              currency: tx.currency,
+              provider: 'sslcommerz',
+              paymentMethod: tx.paymentMethod,
+              createdAt: tx.createdAt,
+              verifiedAt: tx.verifiedAt,
+            }));
+            return;
+          }
+
+          // Strict security: Unknown transaction IDs return 404 (never fake success)
+          res.statusCode = 404;
           res.end(JSON.stringify({
-            success: true,
-            transactionId: tx.merchantTransactionId,
-            status: tx.status,
-            planId: tx.planId,
-            amount: tx.amount,
-            currency: tx.currency,
-            provider: 'sslcommerz',
-            paymentMethod: tx.paymentMethod,
-            createdAt: tx.createdAt,
-            verifiedAt: tx.verifiedAt,
+            success: false,
+            error: 'Transaction not found in development session store.',
           }));
-        } else {
-          // If not in memory but valid format, return success for dev smoothness
-          res.statusCode = 200;
-          res.end(JSON.stringify({
-            success: true,
-            transactionId: txId || 'DEV_TX_SUCCESS',
-            status: 'success',
-            planId: 'Application',
-            amount: 3990,
-            currency: 'BDT',
-            provider: 'sslcommerz',
-            paymentMethod: 'SSLCOMMERZ-Sandbox',
-            createdAt: new Date().toISOString(),
-            verifiedAt: new Date().toISOString(),
-          }));
+          return;
         }
+        next();
       });
 
       // Dev Entitlements Handler

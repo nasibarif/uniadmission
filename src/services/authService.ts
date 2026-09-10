@@ -202,7 +202,7 @@ export class AuthService {
           options: {
             data: {
               full_name: cleanName,
-              tier: 'Explorer',
+              tier: 'Free',
             },
           },
         });
@@ -225,7 +225,7 @@ export class AuthService {
             id: data.user.id,
             fullName: cleanName,
             email: cleanEmail,
-            tier: 'Explorer',
+            tier: 'Free',
             createdAt: new Date().toISOString().split('T')[0],
             lastLoginAt: new Date().toISOString(),
           };
@@ -245,7 +245,7 @@ export class AuthService {
       id: localUserId,
       fullName: cleanName,
       email: cleanEmail,
-      tier: 'Explorer',
+      tier: 'Free',
       createdAt: new Date().toISOString().split('T')[0],
       lastLoginAt: new Date().toISOString(),
     };
@@ -479,7 +479,7 @@ export class AuthService {
               id: profileRow.id,
               fullName: profileRow.full_name,
               email: profileRow.email,
-              tier: profileRow.tier || 'Explorer',
+              tier: profileRow.tier || 'Free',
               createdAt: profileRow.created_at ? profileRow.created_at.split('T')[0] : '2026-09-01',
               lastLoginAt: new Date().toISOString(),
             },
@@ -559,7 +559,7 @@ export class AuthService {
           id: userId,
           fullName: 'Student',
           email: '',
-          tier: 'Explorer',
+          tier: 'Free',
           createdAt: new Date().toISOString().split('T')[0],
           lastLoginAt: new Date().toISOString(),
         }),

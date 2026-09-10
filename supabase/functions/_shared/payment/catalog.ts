@@ -95,7 +95,12 @@ export const SERVER_PLAN_CATALOG: Record<string, PlanCatalogItem> = {
 
 export function getPlanConfig(planId: string): PlanCatalogItem | null {
   if (!planId) return null;
-  return SERVER_PLAN_CATALOG[planId] ?? null;
+  if (SERVER_PLAN_CATALOG[planId]) return SERVER_PLAN_CATALOG[planId];
+  // Case-insensitive lookup (e.g., 'explorer' -> 'Explorer')
+  const matchedKey = Object.keys(SERVER_PLAN_CATALOG).find(
+    (key) => key.toLowerCase() === planId.trim().toLowerCase()
+  );
+  return matchedKey ? SERVER_PLAN_CATALOG[matchedKey] : null;
 }
 
 export function isValidPaidPlan(planId: string): boolean {

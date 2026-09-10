@@ -59,6 +59,34 @@ describe('Payment Gateway Architecture & SSLCOMMERZ Suite', () => {
       expect(content).not.toContain('user.user_metadata?.tier');
       expect(content).not.toContain('user.user_metadata.tier');
     });
+
+    it('should verify authService.ts strictly registers new users with Free tier', () => {
+      const authServicePath = path.join(rootDir, 'src/services/authService.ts');
+      const content = fs.readFileSync(authServicePath, 'utf8');
+
+      // Verify signUp sets tier to Free
+      expect(content).toContain("tier: 'Free'");
+      // Verify no fallback to Explorer on signUp options
+      expect(content).not.toMatch(/data:\s*\{\s*full_name:\s*cleanName,\s*tier:\s*['"]Explorer['"]/);
+    });
+
+    it('should verify AppContext.tsx defaults userTier state to Free', () => {
+      const appContextPath = path.join(rootDir, 'src/context/AppContext.tsx');
+      const content = fs.readFileSync(appContextPath, 'utf8');
+
+      expect(content).toContain("currentUser?.tier || 'Free'");
+      expect(content).not.toContain("currentUser?.tier || 'Explorer'");
+    });
+
+    it('should verify migration exists for ai_usage_daily with atomic stored procedure', () => {
+      const migrationPath = path.join(rootDir, 'supabase/migrations/20260910_ai_usage_daily_and_atomic_quota.sql');
+      expect(fs.existsSync(migrationPath)).toBe(true);
+
+      const content = fs.readFileSync(migrationPath, 'utf8');
+      expect(content).toContain('CREATE TABLE IF NOT EXISTS public.ai_usage_daily');
+      expect(content).toContain('check_and_increment_ai_quota');
+      expect(content).toContain('PRIMARY KEY (user_id, usage_date)');
+    });
   });
 
   // ==========================================================================
@@ -94,6 +122,14 @@ describe('Payment Gateway Architecture & SSLCOMMERZ Suite', () => {
       expect(isValidPaidPlan('School')).toBe(true);
       expect(isValidPaidPlan('Free')).toBe(false);
       expect(isValidPaidPlan('NonExistentPlan')).toBe(false);
+    });
+
+    it('should resolve plan configurations case-insensitively (e.g. explorer -> Explorer)', () => {
+      expect(getPlanConfig('explorer')?.amount).toBe(1490);
+      expect(getPlanConfig('application')?.amount).toBe(3990);
+      expect(getPlanConfig('COMPLETE')?.amount).toBe(7990);
+      expect(getPlanConfig('school')?.amount).toBe(19990);
+      expect(getPlanConfig('free')?.amount).toBe(0);
     });
 
     it('should return null config for arbitrary or manipulated plans', () => {
@@ -344,6 +380,61 @@ describe('Payment Gateway Architecture & SSLCOMMERZ Suite', () => {
       expect(res.provider).toBe('sslcommerz');
 
       global.fetch = originalFetch;
+    });
+
+    it('should map paymentId and gatewayUrl in PaymentService.createPaymentSession response per Section 20', async () => {
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          paymentId: 'TX_UUID_123',
+          gatewayUrl: 'https://sandbox.sslcommerz.com/gwprocess/v4/gw.php?Q=pay',
+          transactionId: 'UA_TX_123',
+          checkoutUrl: 'https://sandbox.sslcommerz.com/gwprocess/v4/gw.php?Q=pay',
+          amount: 3990,
+          currency: 'BDT',
+          planId: 'Application',
+        }),
+      } as any);
+
+      const result = await PaymentService.createPaymentSession('Application', 'user-123');
+      expect(result.success).toBe(true);
+      expect(result.paymentId).toBe('TX_UUID_123');
+      expect(result.gatewayUrl).toBe('https://sandbox.sslcommerz.com/gwprocess/v4/gw.php?Q=pay');
+      expect(result.transactionId).toBe('UA_TX_123');
+      expect(result.checkoutUrl).toBe('https://sandbox.sslcommerz.com/gwprocess/v4/gw.php?Q=pay');
+
+      global.fetch = originalFetch;
+    });
+  });
+
+  // ==========================================================================
+  // 7. Section 9: AI Gateway Daily Limits & Entitlement Enforcement
+  // ==========================================================================
+  describe('7. Section 9: AI Daily Limits & Tier Quota Architecture', () => {
+    it('should verify production AI limits match Section 9 specifications', () => {
+      const aiGatewayPath = path.join(rootDir, 'supabase/functions/ai-gateway/index.ts');
+      const content = fs.readFileSync(aiGatewayPath, 'utf8');
+
+      // Free 5/day, Explorer 25/day, Application 100/day, Complete 250/day, School 1000/day
+      expect(content).toContain('Free: 5');
+      expect(content).toContain('Explorer: 25');
+      expect(content).toContain('Application: 100');
+      expect(content).toContain('Complete: 250');
+      expect(content).toContain('School: 1000');
+    });
+
+    it('should verify payments/index.ts supports GET /payments/:id and Section 20 endpoints', () => {
+      const paymentsPath = path.join(rootDir, 'supabase/functions/payments/index.ts');
+      const content = fs.readFileSync(paymentsPath, 'utf8');
+
+      expect(content).toContain('/callback/sslcommerz/success');
+      expect(content).toContain('/callback/sslcommerz/fail');
+      expect(content).toContain('/callback/sslcommerz/cancel');
+      expect(content).toContain('/webhook/sslcommerz');
+      expect(content).toContain('/entitlements');
+      expect(content).toContain('isSingleIdRoute');
     });
   });
 });
