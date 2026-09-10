@@ -83,6 +83,7 @@ serve(async (req: Request) => {
   }
 
   const startTime = Date.now();
+  const requestId = `req_${crypto.randomUUID()}`;
 
   try {
     const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
@@ -90,11 +91,12 @@ serve(async (req: Request) => {
       return new Response(
         JSON.stringify({
           success: false,
-          error: "AI Gateway service is currently unavailable. Server key not configured.",
+          error: { code: "SERVICE_UNAVAILABLE", message: "AI Gateway service is currently unavailable. Server key not configured." },
+          requestId,
         }),
         {
           status: 503,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          headers: { ...corsHeaders, "X-Request-Id": requestId, "Content-Type": "application/json" },
         }
       );
     }
@@ -121,11 +123,10 @@ serve(async (req: Request) => {
         if (user) {
           userId = user.id;
 
-          // Load authoritative active subscription from database
-          // Load authoritative active subscription from database
+          // Load authoritative active subscription from database (P1-05, P1-06)
           if (supabaseAdmin) {
             const now = new Date().toISOString();
-            const { data: sub } = await supabaseAdmin
+            const { data: sub, error: subErr } = await supabaseAdmin
               .from("subscriptions")
               .select("plan_id, status, expires_at")
               .eq("user_id", user.id)
@@ -134,6 +135,23 @@ serve(async (req: Request) => {
               .order("created_at", { ascending: false })
               .limit(1)
               .maybeSingle();
+
+            if (subErr) {
+              console.error(`[AI Gateway] Subscription lookup error [${requestId}]:`, subErr.message);
+              if (Deno.env.get("ENVIRONMENT") === "production") {
+                return new Response(
+                  JSON.stringify({
+                    success: false,
+                    error: {
+                      code: "AI_ENTITLEMENT_SERVICE_UNAVAILABLE",
+                      message: "AI entitlement verification service is temporarily unavailable. Please try again shortly.",
+                    },
+                    requestId,
+                  }),
+                  { status: 503, headers: { ...corsHeaders, "X-Request-Id": requestId, "Content-Type": "application/json" } }
+                );
+              }
+            }
 
             if (sub && sub.plan_id) {
               userTier = sub.plan_id;
@@ -435,55 +453,36 @@ serve(async (req: Request) => {
     const promptTokens = data.usageMetadata?.promptTokenCount || 0;
     const candidatesTokens = data.usageMetadata?.candidatesTokenCount || 0;
 
-    // 6. Record usage in persistent ai_usage_daily and ai_usage tables
+    // 6. Record token usage via dedicated stored procedure (P0-08)
+    // Separate quota reservation from token accounting: NEVER overwrite or reset request_count!
     if (userId !== "anonymous" && supabaseAdmin) {
       try {
-        // Record in ai_usage_daily
-        await supabaseAdmin.from("ai_usage_daily").upsert({
-          user_id: userId,
-          usage_date: today,
-          request_count: dailyLimit - remainingQuota,
-          input_tokens: promptTokens,
-          output_tokens: candidatesTokens,
-          last_request_at: new Date().toISOString(),
-        }, { onConflict: "user_id,usage_date" });
-
-        // Record in legacy ai_usage table
-        const { data: row } = await supabaseAdmin
-          .from("ai_usage")
-          .select("id, request_count, input_tokens, output_tokens")
-          .eq("user_id", userId)
-          .eq("usage_date", today)
-          .maybeSingle();
-
-        if (row) {
-          await supabaseAdmin
-            .from("ai_usage")
-            .update({
-              request_count: row.request_count + 1,
-              input_tokens: row.input_tokens + promptTokens,
-              output_tokens: row.output_tokens + candidatesTokens,
-              last_request_at: new Date().toISOString(),
-            })
-            .eq("id", row.id);
-        } else {
-          await supabaseAdmin.from("ai_usage").insert({
-            user_id: userId,
-            usage_date: today,
-            request_count: 1,
-            input_tokens: promptTokens,
-            output_tokens: candidatesTokens,
-            last_request_at: new Date().toISOString(),
-          });
-        }
+        await supabaseAdmin.rpc("record_ai_token_usage", {
+          p_user_id: userId,
+          p_usage_date: today,
+          p_input_tokens: promptTokens,
+          p_output_tokens: candidatesTokens,
+        });
       } catch (err: any) {
-        console.warn("[ai_usage_daily/ai_usage] DB record failed:", err?.message);
+        console.warn(`[ai_usage_daily] Token recording failed [${requestId}]:`, err?.message);
       }
     }
 
-    // Structured telemetry logging
+    // Structured telemetry logging with zero student PII (P2-13)
     console.log(
-      `[AI Gateway Telemetry] Action: ${action} | Model: ${model} | Tokens: ${promptTokens + candidatesTokens} | Latency: ${latencyMs}ms | User: ${userId} | Status: 200`
+      JSON.stringify({
+        level: "info",
+        type: "AI_GATEWAY_TELEMETRY",
+        requestId,
+        userId: userId === "anonymous" ? "anonymous" : `usr_${userId.substring(0, 8)}`,
+        action,
+        model,
+        promptTokens,
+        candidatesTokens,
+        totalTokens: promptTokens + candidatesTokens,
+        latencyMs,
+        status: 200,
+      })
     );
 
     return new Response(
@@ -493,9 +492,10 @@ serve(async (req: Request) => {
         remainingQuota,
         limit: dailyLimit,
         tier,
+        requestId,
       }),
       {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...corsHeaders, "X-Request-Id": requestId, "Content-Type": "application/json" },
       }
     );
   } catch (err: any) {

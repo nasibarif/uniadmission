@@ -52,48 +52,42 @@ BEGIN
   VALUES (p_user_id, p_usage_date, 0, 0, 0, NOW())
   ON CONFLICT (user_id, usage_date) DO NOTHING;
 
-  -- 2. Atomically check and increment if below limit
+  -- 2. Conditionally increment request_count strictly IF current request_count < p_limit
   UPDATE public.ai_usage_daily
   SET 
-    request_count = CASE 
-      WHEN ai_usage_daily.request_count < p_limit THEN ai_usage_daily.request_count + 1 
-      ELSE ai_usage_daily.request_count 
-    END,
-    input_tokens = ai_usage_daily.input_tokens + p_prompt_tokens,
-    output_tokens = ai_usage_daily.output_tokens + p_output_tokens,
+    request_count = request_count + 1,
+    input_tokens = input_tokens + p_prompt_tokens,
+    output_tokens = output_tokens + p_output_tokens,
     last_request_at = NOW()
-  WHERE user_id = p_user_id AND usage_date = p_usage_date
+  WHERE user_id = p_user_id
+    AND usage_date = p_usage_date
+    AND request_count < p_limit
   RETURNING request_count INTO v_new_count;
 
-  -- Determine if the request was permitted
-  IF v_new_count <= p_limit THEN
+  -- 3. Exact evaluation: If row was updated, the request was within limits and is permitted
+  IF FOUND THEN
     v_allowed := true;
     v_remaining := GREATEST(0, p_limit - v_new_count);
   ELSE
+    SELECT request_count INTO v_new_count
+    FROM public.ai_usage_daily
+    WHERE user_id = p_user_id AND usage_date = p_usage_date;
+
     v_allowed := false;
     v_remaining := 0;
   END IF;
 
-  -- Keep legacy ai_usage table synchronized if it exists
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'ai_usage') THEN
-    INSERT INTO public.ai_usage (user_id, usage_date, request_count, input_tokens, output_tokens, last_request_at)
-    VALUES (p_user_id, p_usage_date, v_new_count, p_prompt_tokens, p_output_tokens, NOW())
-    ON CONFLICT (user_id, usage_date) DO UPDATE
-      SET request_count = v_new_count,
-          input_tokens = public.ai_usage.input_tokens + p_prompt_tokens,
-          output_tokens = public.ai_usage.output_tokens + p_output_tokens,
-          last_request_at = NOW();
-  END IF;
-
   RETURN jsonb_build_object(
     'allowed', v_allowed,
-    'count', v_new_count,
+    'count', COALESCE(v_new_count, p_limit),
     'remaining', v_remaining,
     'limit', p_limit
   );
 END;
 $$;
 
--- Grant execution to authenticated users and service_role
-GRANT EXECUTE ON FUNCTION public.check_and_increment_ai_quota(UUID, DATE, INTEGER, INTEGER, INTEGER) TO authenticated;
+-- Grant execution strictly to service_role (revoked from public/anon/authenticated)
+REVOKE EXECUTE ON FUNCTION public.check_and_increment_ai_quota(UUID, DATE, INTEGER, INTEGER, INTEGER) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.check_and_increment_ai_quota(UUID, DATE, INTEGER, INTEGER, INTEGER) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.check_and_increment_ai_quota(UUID, DATE, INTEGER, INTEGER, INTEGER) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.check_and_increment_ai_quota(UUID, DATE, INTEGER, INTEGER, INTEGER) TO service_role;

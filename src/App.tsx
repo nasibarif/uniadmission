@@ -24,6 +24,7 @@ import { LegalModal } from './components/legal/LegalModal';
 import { AuthLanding } from './components/auth/AuthLanding';
 import { PaymentSuccess } from './components/payment/PaymentSuccess';
 import { PaymentFailed } from './components/payment/PaymentFailed';
+import { ShieldAlert, Building2 } from 'lucide-react';
 import { PaymentCancelled } from './components/payment/PaymentCancelled';
 
 const MainLayout: React.FC = () => {
@@ -99,10 +100,58 @@ const MainLayout: React.FC = () => {
         return <RoadmapView />;
       case 'counselor':
         return <AiCounselorChat />;
-      case 'admin':
+      case 'admin': {
+        const isAdmin = currentUser.role === 'admin' || currentUser.roles?.includes('admin');
+        if (!isAdmin) {
+          return (
+            <div className="p-8 max-w-xl mx-auto text-center">
+              <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <ShieldAlert className="w-8 h-8" />
+              </div>
+              <h2 className="text-2xl font-bold text-slate-900 mb-2">Access Restricted</h2>
+              <p className="text-slate-600 mb-6 text-sm">
+                Administrative privileges required. Your account ({currentUser.email}) does not have an active administrator role in the server-authoritative registry.
+              </p>
+              <button
+                onClick={() => setActiveTab('dashboard')}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition shadow-xs"
+              >
+                Return to Dashboard
+              </button>
+            </div>
+          );
+        }
         return <AdminDashboard />;
-      case 'school':
+      }
+      case 'school': {
+        const isSchoolUser =
+          currentUser.role === 'school_admin' ||
+          currentUser.role === 'counselor' ||
+          currentUser.roles?.includes('school_admin') ||
+          currentUser.roles?.includes('counselor') ||
+          currentUser.tier === 'School';
+
+        if (!isSchoolUser) {
+          return (
+            <div className="p-8 max-w-xl mx-auto text-center">
+              <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <Building2 className="w-8 h-8" />
+              </div>
+              <h2 className="text-2xl font-bold text-slate-900 mb-2">Institutional Access Required</h2>
+              <p className="text-slate-600 mb-6 text-sm">
+                School Counselor Portal is reserved for verified secondary school counseling teams and institutional partners with an active School subscription.
+              </p>
+              <button
+                onClick={() => setActiveTab('dashboard')}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition shadow-xs"
+              >
+                Return to Dashboard
+              </button>
+            </div>
+          );
+        }
         return <SchoolCounselorPortal />;
+      }
       case 'payment-success':
       case 'payment/success':
         return <PaymentSuccess />;

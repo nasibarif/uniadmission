@@ -498,12 +498,17 @@ export interface ChatMessage {
   };
 }
 
+export type UserRole = 'admin' | 'data_editor' | 'support' | 'school_admin' | 'counselor';
+
 export interface UserAccount {
   id: string;
   fullName: string;
   email: string;
   avatarUrl?: string;
   tier: UserTier;
+  role?: UserRole;
+  roles?: UserRole[];
+  schoolId?: string;
   createdAt: string;
   lastLoginAt: string;
 }

@@ -226,6 +226,8 @@ BEGIN
 END;
 $$;
 
--- Grant execution to authenticated users and service_role
-GRANT EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB, INTEGER) TO authenticated;
+-- Revoke execution from PUBLIC, anon, authenticated; grant strictly to service_role
+REVOKE EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB, INTEGER) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB, INTEGER) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB, INTEGER) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB, INTEGER) TO service_role;

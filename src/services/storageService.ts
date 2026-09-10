@@ -1,6 +1,6 @@
 import { supabase, isSupabaseConfigured } from './supabaseClient';
 import type { VaultDocument } from '../types';
-import { sanitizeFilename } from '../utils/fileValidation';
+import { sanitizeFilename, validateUploadedFile } from '../utils/fileValidation';
 
 const BUCKET_NAME = 'documents';
 const IDB_NAME = 'uniadmission_vault_db';
@@ -122,7 +122,23 @@ export class StorageService {
   }
 
   /**
+   * Helper to compute SHA-256 hash of share tokens for database storage (P1-04)
+   */
+  public static async hashShareToken(token: string): Promise<string> {
+    if (typeof crypto !== 'undefined' && crypto.subtle) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(token);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(hashBuffer))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+    }
+    return token;
+  }
+
+  /**
    * Uploads an actual binary file to Supabase Storage (or IndexedDB in offline sandbox mode).
+   * Validates file size, dangerous extensions, and binary magic bytes (P1-10).
    */
   public static async uploadDocumentFile(
     userId: string,
@@ -130,33 +146,16 @@ export class StorageService {
     file: File,
     version = 1
   ): Promise<{ storagePath: string; mimeType: string; sizeBytes: number }> {
-    // 1. File size validation (max 20MB)
-    const MAX_SIZE_BYTES = 20 * 1024 * 1024;
-    if (file.size > MAX_SIZE_BYTES) {
-      throw new Error(`File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds the maximum 20MB limit.`);
-    }
-
-    // 2. Format & MIME validation
-    const ALLOWED_MIME_TYPES = new Set([
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'text/plain',
-      'image/jpeg',
-      'image/png',
-      'image/webp',
-    ]);
-    const cleanExt = (file.name.split('.').pop() || '').toLowerCase();
-    const ALLOWED_EXTS = new Set(['pdf', 'doc', 'docx', 'txt', 'jpg', 'jpeg', 'png', 'webp']);
-
-    if ((file.type && !ALLOWED_MIME_TYPES.has(file.type)) && !ALLOWED_EXTS.has(cleanExt)) {
-      throw new Error(`Unsupported file type (.${cleanExt}). Supported formats: PDF, Word (.doc, .docx), plain text, and images (.jpg, .png, .webp).`);
+    // 1. Comprehensive File Inspection (P1-10): Magic bytes, extension whitelist, and size
+    const validation = await validateUploadedFile(file);
+    if (!validation.valid) {
+      throw new Error(validation.error || 'Invalid file uploaded.');
     }
 
     const storagePath = this.buildStoragePath(userId, docId, file.name, version);
     const mimeType = file.type || 'application/octet-stream';
 
-    // 3. PERSISTENCE INVERSION (Error 13):
+    // 2. PERSISTENCE INVERSION:
     // Upload to authoritative Supabase Storage FIRST. Never cache in IndexedDB before persistent upload confirmation.
     if (isSupabaseConfigured() && supabase) {
       try {
@@ -177,7 +176,7 @@ export class StorageService {
       }
     }
 
-    // 4. Update local client cache ONLY after cloud confirmation (or in offline mode)
+    // 3. Update local client cache ONLY after cloud confirmation (or in offline mode)
     await saveFileToIndexedDB(storagePath, file, file.name, mimeType);
 
     return {
@@ -188,7 +187,7 @@ export class StorageService {
   }
 
   /**
-   * Generates a signed, short-lived URL (15 minutes, Error 36) for secure download or preview.
+   * Generates a signed, short-lived URL (15 minutes) for secure download or preview.
    * Returns a local blob URL if stored in IndexedDB.
    */
   public static async getSignedOrPreviewUrl(storagePath: string): Promise<string | null> {
@@ -220,13 +219,31 @@ export class StorageService {
 
   /**
    * Performs real file download of the uploaded document (never a fake metadata text file).
+   * AUTHORITATIVE CLOUD FIRST (P1-01):
+   * Verifies cloud authorization and generates a signed URL BEFORE checking local cache.
+   * If cloud authorization fails (or document was deleted from cloud), cached data is NEVER exposed.
    */
   public static async downloadDocumentFile(doc: VaultDocument): Promise<void> {
     let downloadUrl: string | null = null;
     let shouldRevoke = false;
 
-    // 1. Check local binary in IndexedDB first for fast instant response
-    if (doc.storagePath) {
+    // 1. Authoritative Cloud Authorization Check FIRST (P1-01)
+    if (isSupabaseConfigured() && supabase) {
+      if (!doc.storagePath) {
+        throw new Error(`DOCUMENT_NOT_FOUND: Document "${doc.fileName}" has no cloud storage path.`);
+      }
+
+      const { data, error } = await supabase.storage
+        .from(BUCKET_NAME)
+        .createSignedUrl(doc.storagePath, 600);
+
+      if (error || !data?.signedUrl) {
+        throw new Error(`DOCUMENT_ACCESS_DENIED: Cloud authorization failed or document was deleted: ${error?.message || 'Access denied'}`);
+      }
+
+      downloadUrl = data.signedUrl;
+    } else if (doc.storagePath) {
+      // 2. Offline / local sandbox fallback ONLY when Supabase is not configured
       const localBlob = await getFileFromIndexedDB(doc.storagePath);
       if (localBlob) {
         downloadUrl = URL.createObjectURL(localBlob);
@@ -234,24 +251,9 @@ export class StorageService {
       }
     }
 
-    // 2. If not found in IndexedDB, fetch signed URL from Supabase
-    if (!downloadUrl && doc.storagePath && isSupabaseConfigured() && supabase) {
-      try {
-        const { data } = await supabase.storage
-          .from(BUCKET_NAME)
-          .createSignedUrl(doc.storagePath, 600);
-
-        if (data?.signedUrl) {
-          downloadUrl = data.signedUrl;
-        }
-      } catch (err) {
-        console.warn('[StorageService] Failed to retrieve signed URL for download:', err);
-      }
-    }
-
-    // 3. Authoritative check: If no binary file exists, throw explicit error (no fake text files)
+    // 3. If no verified binary exists, fail explicitly
     if (!downloadUrl) {
-      throw new Error(`Original document binary "${doc.fileName}" is unavailable in cloud storage. Please re-upload the document.`);
+      throw new Error(`DOCUMENT_NOT_FOUND: Original document binary "${doc.fileName}" is unavailable in cloud storage. Please re-upload the document.`);
     }
 
     // Trigger browser file download
@@ -269,29 +271,37 @@ export class StorageService {
 
   /**
    * Delete a document file from storage and local cache.
+   * AUTHORITATIVE CLOUD FIRST (P1-02):
+   * Cloud deletion must succeed before local cache is removed. If cloud deletion fails,
+   * an error is thrown and local cache is preserved for inspection.
    */
   public static async deleteDocumentFile(storagePath?: string): Promise<void> {
     if (!storagePath) return;
 
-    await deleteFileFromIndexedDB(storagePath);
-
+    // 1. Authoritative Cloud Deletion FIRST (P1-02)
     if (isSupabaseConfigured() && supabase) {
-      try {
-        await supabase.storage.from(BUCKET_NAME).remove([storagePath]);
-      } catch (err) {
-        console.warn('[StorageService] Supabase delete file error:', err);
+      const { error } = await supabase.storage
+        .from(BUCKET_NAME)
+        .remove([storagePath]);
+
+      if (error) {
+        throw new Error(`DOCUMENT_DELETE_FAILED: Cloud document deletion failed: ${error.message}`);
       }
     }
+
+    // 2. Remove local client cache ONLY after cloud confirmation succeeds
+    await deleteFileFromIndexedDB(storagePath);
   }
 
   /**
-   * Generates a temporary expiring signed share link for counselor/admissions review.
+   * Generates a temporary expiring signed share link backed by cryptographic UUID and persistent registry (P1-03, P1-04).
    */
   public static async createExpiringShareLink(
     storagePath: string,
     expiresInMinutes = 60
   ): Promise<{ shareUrl: string | null; token: string; expiresAt: string }> {
-    const token = `share_${Math.random().toString(36).substring(2, 12)}_${Date.now()}`;
+    // Cryptographically secure token (P1-03)
+    const token = `share_${crypto.randomUUID()}`;
     const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString();
 
     let shareUrl: string | null = null;
@@ -303,8 +313,20 @@ export class StorageService {
         if (data?.signedUrl) {
           shareUrl = data.signedUrl;
         }
+
+        // Persistent share link registration with hashed token (P1-04)
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const tokenHash = await this.hashShareToken(token);
+          await supabase.from('document_share_links').insert({
+            document_id: storagePath,
+            owner_user_id: user.id,
+            token_hash: tokenHash,
+            expires_at: expiresAt,
+          });
+        }
       } catch (err) {
-        console.warn('[StorageService] Error creating signed share URL:', err);
+        console.warn('[StorageService] Error creating signed share URL or registering link:', err);
       }
     }
 
@@ -316,5 +338,22 @@ export class StorageService {
     }
 
     return { shareUrl, token, expiresAt };
+  }
+
+  /**
+   * Revoke an active share link by token (P1-04)
+   */
+  public static async revokeShareLink(token: string): Promise<void> {
+    if (isSupabaseConfigured() && supabase) {
+      const tokenHash = await this.hashShareToken(token);
+      const { error } = await supabase
+        .from('document_share_links')
+        .update({ revoked_at: new Date().toISOString() })
+        .eq('token_hash', tokenHash);
+
+      if (error) {
+        throw new Error(`Failed to revoke share link: ${error.message}`);
+      }
+    }
   }
 }

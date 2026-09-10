@@ -10,8 +10,8 @@ export interface FileValidationResult {
   sanitizedName: string;
 }
 
-// 10 MB maximum file size limit
-export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+// 20 MB maximum file size limit
+export const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
 // Allowed file extensions
 export const ALLOWED_EXTENSIONS = new Set([
@@ -157,7 +157,7 @@ export async function validateUploadedFile(file: File): Promise<FileValidationRe
     const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
     return {
       valid: false,
-      error: `File size (${sizeMb} MB) exceeds the maximum allowed limit of 10 MB.`,
+      error: `File size (${sizeMb} MB) exceeds the maximum 20MB limit.`,
       sanitizedName,
     };
   }
@@ -174,7 +174,7 @@ export async function validateUploadedFile(file: File): Promise<FileValidationRe
   if (DANGEROUS_EXTENSIONS.has(extension)) {
     return {
       valid: false,
-      error: `File type .${extension} is executable or poses a security risk and cannot be uploaded.`,
+      error: `Unsupported file type (.${extension}). File is executable or poses a security risk and cannot be uploaded.`,
       sanitizedName,
     };
   }
@@ -183,7 +183,7 @@ export async function validateUploadedFile(file: File): Promise<FileValidationRe
   if (!ALLOWED_EXTENSIONS.has(extension)) {
     return {
       valid: false,
-      error: `Unsupported file extension .${extension}. Allowed: PDF, DOCX, DOC, JPG, PNG, TXT.`,
+      error: `Unsupported file type (.${extension}). Allowed formats: PDF, DOCX, DOC, JPG, PNG, TXT.`,
       sanitizedName,
     };
   }

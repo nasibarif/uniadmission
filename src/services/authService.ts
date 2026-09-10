@@ -1,4 +1,4 @@
-import type { UserAccount, StudentProfile, ApplicationItem, VaultDocument } from '../types';
+import type { UserAccount, UserRole, StudentProfile, ApplicationItem, VaultDocument } from '../types';
 import { SAMPLE_PROFILES } from '../data/sampleProfiles';
 import { supabase, isSupabaseConfigured } from './supabaseClient';
 import { sanitizeText, sanitizeObject } from '../utils/security';
@@ -32,6 +32,86 @@ export interface AuthResult {
 
 export class AuthService {
   /**
+   * Resolves authoritative user account attributes (tier, roles, school memberships) from database
+   */
+  public static async resolveUserAccount(sessionUser: any): Promise<UserAccount> {
+    let tier: any = 'Free';
+    let roles: UserRole[] = [];
+    let schoolId: string | undefined;
+
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        // 1. Authoritative subscription lookup for active tier
+        const now = new Date().toISOString();
+        const { data: sub } = await supabase
+          .from('subscriptions')
+          .select('plan_id, status, expires_at')
+          .eq('user_id', sessionUser.id)
+          .eq('status', 'active')
+          .or(`expires_at.is.null,expires_at.gt.${now}`)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (sub?.plan_id) {
+          tier = sub.plan_id;
+        } else {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('tier')
+            .eq('id', sessionUser.id)
+            .maybeSingle();
+          if (profile?.tier) {
+            tier = profile.tier;
+          }
+        }
+
+        // 2. Authoritative role assignment lookup from user_roles (P0-09)
+        const { data: roleData } = await supabase
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', sessionUser.id)
+          .eq('active', true);
+
+        if (roleData && roleData.length > 0) {
+          roles = roleData.map((r) => r.role as UserRole);
+        }
+
+        // 3. Authoritative school membership lookup from school_memberships (P0-10)
+        const { data: membership } = await supabase
+          .from('school_memberships')
+          .select('school_id, role')
+          .eq('user_id', sessionUser.id)
+          .eq('active', true)
+          .maybeSingle();
+
+        if (membership) {
+          schoolId = membership.school_id;
+          if (membership.role && !roles.includes(membership.role as UserRole)) {
+            roles.push(membership.role as UserRole);
+          }
+        }
+      } catch (err) {
+        console.warn('[AuthService] Role/subscription lookup warning:', err);
+      }
+    }
+
+    const primaryRole = roles[0] || (tier === 'School' ? 'school_admin' : undefined);
+
+    return {
+      id: sessionUser.id,
+      fullName: sessionUser.user_metadata?.full_name || sessionUser.email?.split('@')[0] || 'Student',
+      email: sessionUser.email || '',
+      tier,
+      role: primaryRole,
+      roles,
+      schoolId,
+      createdAt: sessionUser.created_at ? sessionUser.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+      lastLoginAt: sessionUser.last_sign_in_at || new Date().toISOString(),
+    };
+  }
+
+  /**
    * Cleans and returns the cached session user from browser storage
    */
   public static getCachedUser(): UserAccount | null {
@@ -56,15 +136,7 @@ export class AuthService {
           return null;
         }
 
-        const userAccount: UserAccount = {
-          id: session.user.id,
-          fullName: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Student',
-          email: session.user.email || '',
-          tier: 'Free',
-          createdAt: session.user.created_at ? session.user.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
-          lastLoginAt: session.user.last_sign_in_at || new Date().toISOString(),
-        };
-
+        const userAccount = await this.resolveUserAccount(session.user);
         localStorage.setItem(SESSION_KEY, JSON.stringify(userAccount));
         return userAccount;
       } catch (err) {
@@ -83,14 +155,7 @@ export class AuthService {
     if (isSupabaseConfigured() && supabase) {
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (session?.user) {
-          const userAccount: UserAccount = {
-            id: session.user.id,
-            fullName: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Student',
-            email: session.user.email || '',
-            tier: 'Free',
-            createdAt: session.user.created_at ? session.user.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
-            lastLoginAt: session.user.last_sign_in_at || new Date().toISOString(),
-          };
+          const userAccount = await AuthService.resolveUserAccount(session.user);
           localStorage.setItem(SESSION_KEY, JSON.stringify(userAccount));
           callback(userAccount);
         } else if (event === 'SIGNED_OUT') {
@@ -144,15 +209,7 @@ export class AuthService {
           return { success: false, error: 'Unable to authenticate. Please try again.' };
         }
 
-        const userAccount: UserAccount = {
-          id: data.user.id,
-          fullName: data.user.user_metadata?.full_name || cleanEmail.split('@')[0],
-          email: data.user.email || cleanEmail,
-          tier: 'Free',
-          createdAt: data.user.created_at ? data.user.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
-          lastLoginAt: new Date().toISOString(),
-        };
-
+        const userAccount = await this.resolveUserAccount(data.user);
         localStorage.setItem(SESSION_KEY, JSON.stringify(userAccount));
         return { success: true, user: userAccount };
       } catch (err: any) {

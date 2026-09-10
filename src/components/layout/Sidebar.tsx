@@ -24,7 +24,15 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
-  const { activeTab, setActiveTab, userTier, setIsUpgradeModalOpen, openLegalModal } = useApp();
+  const { activeTab, setActiveTab, userTier, setIsUpgradeModalOpen, openLegalModal, currentUser } = useApp();
+
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.roles?.includes('admin');
+  const isSchoolUser =
+    currentUser?.role === 'school_admin' ||
+    currentUser?.role === 'counselor' ||
+    currentUser?.roles?.includes('school_admin') ||
+    currentUser?.roles?.includes('counselor') ||
+    userTier === 'School';
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard Overview', icon: LayoutDashboard, badge: null, minTier: 'Free' },
@@ -39,8 +47,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
     { id: 'cv', label: 'CV & Activity Builder', icon: FileText, badge: 'AI', minTier: 'Application' },
     { id: 'roadmap', label: 'Personalized Roadmap', icon: CalendarDays, badge: 'Timeline', minTier: 'Complete' },
     { id: 'counselor', label: 'AI Admission Counselor', icon: Bot, badge: '24/7', minTier: 'Free' },
-    { id: 'school', label: 'School Counselor B2B', icon: Building, badge: 'B2B', minTier: 'Free' },
-    { id: 'admin', label: 'Admin & Data Quality', icon: ShieldCheck, badge: 'Staff', minTier: 'Free' },
+    ...(isSchoolUser ? [{ id: 'school', label: 'School Counselor B2B', icon: Building, badge: 'B2B', minTier: 'Free' }] : []),
+    ...(isAdmin ? [{ id: 'admin', label: 'Admin & Data Quality', icon: ShieldCheck, badge: 'Staff', minTier: 'Free' }] : []),
   ];
 
   const checkTierLocked = (minTier: string) => {

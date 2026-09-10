@@ -42,8 +42,10 @@ function getCorsHeaders(req: Request) {
 serve(async (req: Request) => {
   const corsHeaders = getCorsHeaders(req);
 
+  const requestId = `pay_${crypto.randomUUID()}`;
+
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response("ok", { headers: { ...corsHeaders, "X-Request-Id": requestId } });
   }
 
   const url = new URL(req.url);
@@ -63,6 +65,27 @@ serve(async (req: Request) => {
     Deno.env.get("APP_BASE_URL") ||
     "https://uniadmission.com"
   ).replace(/\/+$/, "");
+
+  // Gateway Response Redaction (P1-09): Strips raw payment PII and secrets before persistence
+  function redactGatewayResponse(data: any): any {
+    if (!data || typeof data !== "object") return data;
+    const sensitiveKeys = new Set([
+      "card_number", "card_no", "bin_card_no", "card_issuer",
+      "card_brand", "card_sub_brand", "store_passwd", "password",
+      "secret", "token", "sessionkey"
+    ]);
+    const sanitized: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (sensitiveKeys.has(key.toLowerCase())) {
+        sanitized[key] = "[REDACTED]";
+      } else if (typeof value === "object" && value !== null) {
+        sanitized[key] = redactGatewayResponse(value);
+      } else {
+        sanitized[key] = value;
+      }
+    }
+    return sanitized;
+  }
 
   // Authenticate user identity strictly from JWT
   async function getAuthenticatedUser(req: Request) {
@@ -98,22 +121,23 @@ serve(async (req: Request) => {
     paymentMethod: string,
     gatewayResponse: any
   ) {
+    const sanitizedResponse = redactGatewayResponse(gatewayResponse || {});
     const { data, error } = await supabaseAdmin.rpc("fulfill_payment_transaction", {
       p_merchant_transaction_id: merchantTransactionId,
       p_provider_validation_id: valId,
       p_provider_transaction_id: providerTransactionId,
       p_payment_method: paymentMethod,
-      p_gateway_response: gatewayResponse || {},
+      p_gateway_response: sanitizedResponse,
     });
 
     if (error) {
-      console.error("[RPC fulfill_payment_transaction error]:", error);
-      throw new Error(`Payment fulfillment failed: ${error.message}`);
+      console.error(`[RPC fulfill_payment_transaction error [${requestId}]]:`, error);
+      throw new Error(`PAYMENT_FULFILLMENT_UNAVAILABLE: ${error.message}`);
     }
 
     if (!data?.success) {
-      console.error("[RPC fulfill_payment_transaction rejection]:", data);
-      throw new Error(data?.error || "Payment fulfillment failed in database");
+      console.error(`[RPC fulfill_payment_transaction rejection [${requestId}]]:`, data);
+      throw new Error(data?.error || "PAYMENT_FULFILLMENT_FAILED");
     }
 
     return data;
@@ -535,7 +559,7 @@ serve(async (req: Request) => {
     // 6. GET /status or GET /:id: Query Transaction Status
     // --------------------------------------------------------------------------
     const singleIdMatch = path.match(/^\/([a-zA-Z0-9_-]+)$/);
-    const isSingleIdRoute = singleIdMatch && !["create", "create-payment", "callback", "webhook", "ipn", "status", "payment-status", "entitlements", "my-entitlement"].includes(singleIdMatch[1]);
+    const isSingleIdRoute = singleIdMatch && !["create", "create-payment", "callback", "webhook", "ipn", "status", "payment-status", "entitlements", "my-entitlement", "reconcile"].includes(singleIdMatch[1]);
 
     if (path === "/status" || path === "/payment-status" || isSingleIdRoute) {
       if (req.method !== "GET") {
@@ -647,6 +671,176 @@ serve(async (req: Request) => {
           },
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // --------------------------------------------------------------------------
+    // 8. POST /reconcile: Stale Payment Transaction Reconciliation (P1-07)
+    // --------------------------------------------------------------------------
+    if (path === "/reconcile") {
+      if (req.method !== "POST") {
+        return new Response(JSON.stringify({ error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed" } }), {
+          status: 405,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Authorization: Bearer token must match service role or an admin user
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      const isServiceRole = Boolean(supabaseServiceKey) && token === supabaseServiceKey;
+      let isAdmin = false;
+
+      if (!isServiceRole) {
+        const user = await getAuthenticatedUser(req);
+        if (user) {
+          const { data: roleRow } = await supabaseAdmin
+            .from("user_roles")
+            .select("role")
+            .eq("user_id", user.id)
+            .eq("role", "admin")
+            .eq("active", true)
+            .maybeSingle();
+          if (roleRow) {
+            isAdmin = true;
+          }
+        }
+      }
+
+      if (!isServiceRole && !isAdmin) {
+        return new Response(
+          JSON.stringify({ error: { code: "UNAUTHORIZED", message: "Service role or admin authorization required for reconciliation." } }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+      // Query stale transactions in initiated, pending, or processing status older than 5 minutes
+      const { data: staleTxs, error: staleErr } = await supabaseAdmin
+        .from("payment_transactions")
+        .select("*")
+        .in("status", ["initiated", "pending", "processing"])
+        .lt("created_at", fiveMinutesAgo)
+        .order("created_at", { ascending: true })
+        .limit(50);
+
+      if (staleErr) {
+        console.error(`[Reconcile DB Error [${requestId}]]:`, staleErr.message);
+        return new Response(
+          JSON.stringify({ error: { code: "DB_ERROR", message: "Failed to query stale transactions." } }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const results: Array<{
+        transactionId: string;
+        previousStatus: string;
+        newStatus: string;
+        action: string;
+        error?: string;
+      }> = [];
+
+      for (const tx of staleTxs || []) {
+        try {
+          const valId = tx.provider_validation_id || "";
+          const tranId = tx.merchant_transaction_id;
+
+          if (valId || tranId) {
+            const verifyResult = await gateway.verifyPayment({
+              validationId: valId,
+              merchantTransactionId: tranId,
+              expectedAmount: Number(tx.amount),
+              expectedCurrency: tx.currency as "BDT",
+            });
+
+            if (verifyResult.isValid && verifyResult.status === "success") {
+              await fulfillPayment(
+                tranId,
+                valId || verifyResult.validationId || "",
+                verifyResult.providerTransactionId || "",
+                verifyResult.paymentMethod || "UNKNOWN",
+                verifyResult.rawResponse || {}
+              );
+
+              results.push({
+                transactionId: tranId,
+                previousStatus: tx.status,
+                newStatus: "success",
+                action: "FULFILLED",
+              });
+              continue;
+            } else if (verifyResult.status === "failed") {
+              await supabaseAdmin
+                .from("payment_transactions")
+                .update({
+                  status: "failed",
+                  failure_reason: verifyResult.error || "Reconciliation determined payment failed at gateway",
+                  gateway_response: redactGatewayResponse(verifyResult.rawResponse || {}),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", tx.id)
+                .in("status", ["initiated", "pending", "processing"]);
+
+              results.push({
+                transactionId: tranId,
+                previousStatus: tx.status,
+                newStatus: "failed",
+                action: "MARKED_FAILED",
+              });
+              continue;
+            }
+          }
+
+          // If older than 24 hours without resolution, transition to expired
+          if (tx.created_at < twentyFourHoursAgo) {
+            await supabaseAdmin
+              .from("payment_transactions")
+              .update({
+                status: "expired",
+                failure_reason: "Transaction expired after 24h without gateway completion",
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", tx.id)
+              .in("status", ["initiated", "pending", "processing"]);
+
+            results.push({
+              transactionId: tx.merchant_transaction_id,
+              previousStatus: tx.status,
+              newStatus: "expired",
+              action: "EXPIRED_STALE",
+            });
+          } else {
+            results.push({
+              transactionId: tx.merchant_transaction_id,
+              previousStatus: tx.status,
+              newStatus: tx.status,
+              action: "PENDING_RETRY",
+            });
+          }
+        } catch (err: any) {
+          console.error(`[Reconcile Error on ${tx.merchant_transaction_id}]:`, err?.message);
+          results.push({
+            transactionId: tx.merchant_transaction_id,
+            previousStatus: tx.status,
+            newStatus: tx.status,
+            action: "ERROR",
+            error: err?.message,
+          });
+        }
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          requestId,
+          reconciledCount: results.length,
+          fulfilledCount: results.filter(r => r.action === "FULFILLED").length,
+          expiredCount: results.filter(r => r.action === "EXPIRED_STALE").length,
+          results,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json", "X-Request-Id": requestId } }
       );
     }
 

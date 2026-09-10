@@ -737,4 +737,148 @@ describe('Payment Gateway Architecture & SSLCOMMERZ Suite', () => {
       expect(code).toContain("subscriptions.filter(s => s.status === 'active')");
     });
   });
+
+  describe('14. Security & Production Bug Fixation Audit (2026-09-10)', () => {
+    it('P0-01: should fail closed on payment fulfillment error with zero direct-DB mutation fallback', () => {
+      const edgeFnPath = path.join(rootDir, 'supabase/functions/payments/index.ts');
+      const code = fs.readFileSync(edgeFnPath, 'utf8');
+
+      expect(code).toContain('PAYMENT_FULFILLMENT_UNAVAILABLE');
+      const fulfillPaymentBlock = code.substring(code.indexOf('async function fulfillPayment'), code.indexOf('if (path === "/create"'));
+      expect(fulfillPaymentBlock).not.toContain('supabaseAdmin.from("subscriptions").insert');
+      expect(fulfillPaymentBlock).not.toContain('supabaseAdmin.from("profiles").update');
+    });
+
+    it('P0-02 & P0-03: should verify authoritative subscription_plans table, no duration in RPC, and service_role privileges', () => {
+      const v4MigrationPath = path.join(rootDir, 'supabase/migrations/20260910_security_audit_fixations_v4.sql');
+      const code = fs.readFileSync(v4MigrationPath, 'utf8');
+
+      expect(code).toContain('CREATE TABLE IF NOT EXISTS public.subscription_plans');
+      expect(code).toContain('p_merchant_transaction_id TEXT');
+      expect(code).not.toContain('p_duration_days');
+      expect(code).toContain('REVOKE EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB) FROM authenticated;');
+      expect(code).toContain('GRANT EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB) TO service_role;');
+    });
+
+    it('P0-04: should ensure payment callback URLs use fixed base URLs and never request-derived origin', () => {
+      const edgeFnPath = path.join(rootDir, 'supabase/functions/payments/index.ts');
+      const code = fs.readFileSync(edgeFnPath, 'utf8');
+
+      expect(code).toContain('Deno.env.get("PAYMENT_CALLBACK_BASE_URL")');
+      expect(code).toContain('Deno.env.get("PAYMENT_BACKEND_BASE_URL")');
+      expect(code).not.toContain('const successCallbackUrl = `${url.origin}');
+    });
+
+    it('P0-05 & P0-07: should verify AI quota stored procedure uses conditional UPDATE with FOUND check and service_role grant', () => {
+      const v4MigrationPath = path.join(rootDir, 'supabase/migrations/20260910_security_audit_fixations_v4.sql');
+      const code = fs.readFileSync(v4MigrationPath, 'utf8');
+
+      expect(code).toContain('request_count < p_limit');
+      expect(code).toContain('RETURNING request_count INTO v_new_count');
+      expect(code).toContain('IF FOUND THEN');
+      expect(code).toContain('REVOKE EXECUTE ON FUNCTION public.check_and_increment_ai_quota(UUID, DATE, INTEGER, INTEGER, INTEGER) FROM authenticated;');
+      expect(code).toContain('GRANT EXECUTE ON FUNCTION public.check_and_increment_ai_quota(UUID, DATE, INTEGER, INTEGER, INTEGER) TO service_role;');
+    });
+
+    it('P0-06: should verify production AI Gateway fails closed with 503 AI_QUOTA_SERVICE_UNAVAILABLE on RPC failure', () => {
+      const aiGatewayPath = path.join(rootDir, 'supabase/functions/ai-gateway/index.ts');
+      const code = fs.readFileSync(aiGatewayPath, 'utf8');
+
+      expect(code).toContain('AI_QUOTA_SERVICE_UNAVAILABLE');
+      expect(code).toContain('isProd');
+    });
+
+    it('P0-08: should verify AI token usage recording is separated from quota reservation via record_ai_token_usage', () => {
+      const aiGatewayPath = path.join(rootDir, 'supabase/functions/ai-gateway/index.ts');
+      const code = fs.readFileSync(aiGatewayPath, 'utf8');
+
+      expect(code).toContain('record_ai_token_usage');
+      expect(code).not.toContain('request_count: dailyLimit - remainingQuota');
+    });
+
+    it('P0-09 & P0-10: should verify server-authoritative route guards in App.tsx and role resolution in authService.ts', () => {
+      const appPath = path.join(rootDir, 'src/App.tsx');
+      const appCode = fs.readFileSync(appPath, 'utf8');
+
+      expect(appCode).toContain("currentUser.role === 'admin' || currentUser.roles?.includes('admin')");
+      expect(appCode).toContain("currentUser.role === 'school_admin' ||");
+      expect(appCode).toContain('Access Restricted');
+      expect(appCode).toContain('Institutional Access Required');
+
+      const authPath = path.join(rootDir, 'src/services/authService.ts');
+      const authCode = fs.readFileSync(authPath, 'utf8');
+
+      expect(authCode).toContain("from('user_roles')");
+      expect(authCode).toContain("from('school_memberships')");
+      expect(authCode).toContain('resolveUserAccount');
+    });
+
+    it('P1-01 & P1-02: should verify Cloud Storage download authorization priority and cloud deletion error propagation', () => {
+      const storagePath = path.join(rootDir, 'src/services/storageService.ts');
+      const code = fs.readFileSync(storagePath, 'utf8');
+
+      const cloudDlIdx = code.indexOf('isSupabaseConfigured() && supabase');
+      const localDlIdx = code.indexOf('getFileFromIndexedDB(doc.storagePath)');
+      expect(cloudDlIdx).toBeGreaterThan(0);
+      expect(localDlIdx).toBeGreaterThan(cloudDlIdx);
+
+      expect(code).toContain('DOCUMENT_DELETE_FAILED');
+      expect(code).toContain('await deleteFileFromIndexedDB(storagePath);');
+    });
+
+    it('P1-03 & P1-04: should verify cryptographic share link token generation and database registration', () => {
+      const storagePath = path.join(rootDir, 'src/services/storageService.ts');
+      const code = fs.readFileSync(storagePath, 'utf8');
+
+      expect(code).toContain('crypto.randomUUID()');
+      expect(code).not.toContain('Math.random().toString(36)');
+      expect(code).toContain('document_share_links');
+      expect(code).toContain('hashShareToken');
+      expect(code).toContain('revokeShareLink');
+    });
+
+    it('P1-07: should verify stale payment transaction reconciliation endpoint POST /reconcile', () => {
+      const edgeFnPath = path.join(rootDir, 'supabase/functions/payments/index.ts');
+      const code = fs.readFileSync(edgeFnPath, 'utf8');
+
+      expect(code).toContain('path === "/reconcile"');
+      expect(code).toContain('reconciledCount');
+      expect(code).toContain('gateway.verifyPayment');
+    });
+
+    it('P1-08: should verify payment state machine database trigger rejects invalid transitions', () => {
+      const v4MigrationPath = path.join(rootDir, 'supabase/migrations/20260910_security_audit_fixations_v4.sql');
+      const code = fs.readFileSync(v4MigrationPath, 'utf8');
+
+      expect(code).toContain('validate_payment_transaction_transition');
+      expect(code).toContain('Invalid payment state transition');
+      expect(code).toContain('trg_validate_payment_transaction_transition');
+    });
+
+    it('P1-09: should verify gateway response redaction helper scrubs sensitive credentials and card data', () => {
+      const edgeFnPath = path.join(rootDir, 'supabase/functions/payments/index.ts');
+      const code = fs.readFileSync(edgeFnPath, 'utf8');
+
+      expect(code).toContain('redactGatewayResponse');
+      expect(code).toContain('[REDACTED]');
+      expect(code).toContain('card_number');
+      expect(code).toContain('store_passwd');
+    });
+
+    it('P1-10: should verify magic byte inspection and consistent 20MB file limit', () => {
+      const fileValPath = path.join(rootDir, 'src/utils/fileValidation.ts');
+      const code = fs.readFileSync(fileValPath, 'utf8');
+
+      expect(code).toContain('20 * 1024 * 1024');
+      expect(code).toContain('verifyMagicBytes');
+    });
+
+    it('P2-07: should verify README.md does not claim enterprise-grade', () => {
+      const readmePath = path.join(rootDir, 'README.md');
+      const code = fs.readFileSync(readmePath, 'utf8');
+
+      expect(code).not.toContain('enterprise-grade admissions intelligence');
+      expect(code).toContain('production-focused admissions intelligence platform');
+    });
+  });
 });

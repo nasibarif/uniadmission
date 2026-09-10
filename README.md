@@ -7,7 +7,7 @@
 [![Supabase](https://img.shields.io/badge/Supabase-Auth%20%26%20RLS-3ECF8E?logo=supabase&logoColor=white)](https://supabase.com/)
 [![Zod](https://img.shields.io/badge/Validation-Zod%20v4-3E67B1?logo=zod&logoColor=white)](https://zod.dev/)
 
-**UniAdmission** is an enterprise-grade admissions intelligence and scholarship matching platform designed for international students seeking undergraduate and graduate degrees worldwide (USA, Canada, UK, Germany, Australia, Europe, and Asia).
+**UniAdmission** is a production-focused admissions intelligence platform and scholarship matching system designed for international students seeking undergraduate and graduate degrees worldwide (USA, Canada, UK, Germany, Australia, Europe, and Asia).
 
 ---
 
