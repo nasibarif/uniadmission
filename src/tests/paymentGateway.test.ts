@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { PaymentService, PLAN_PRICING_BDT } from '../services/paymentService';
+import { AuthService } from '../services/authService';
 import { SubscriptionService } from '../services/subscriptionService';
 import { DeadlineService } from '../services/deadlineService';
 import { StorageService } from '../services/storageService';
@@ -879,6 +880,135 @@ describe('Payment Gateway Architecture & SSLCOMMERZ Suite', () => {
 
       expect(code).not.toContain('enterprise-grade admissions intelligence');
       expect(code).toContain('production-focused admissions intelligence platform');
+    });
+  });
+
+  // ==========================================================================
+  // 15. Fresh Production Audit 2026-09-10 Fixation Verification
+  // ==========================================================================
+  describe('15. Fresh Production Audit 2026-09-10 Fixations Verification', () => {
+    it('P0-02 & P0-03: should verify legacy bKash trigger and procedure are dropped for solitary fulfillment path', () => {
+      const v4MigrationPath = path.join(rootDir, 'supabase/migrations/20260910_security_audit_fixations_v4.sql');
+      const v4Sql = fs.readFileSync(v4MigrationPath, 'utf8');
+
+      expect(v4Sql).toContain('DROP TRIGGER IF EXISTS on_bkash_payment_completed ON public.payment_transactions;');
+      expect(v4Sql).toContain('DROP TRIGGER IF EXISTS trg_completed_bkash_payment ON public.payment_transactions;');
+      expect(v4Sql).toContain('DROP FUNCTION IF EXISTS public.handle_completed_bkash_payment();');
+
+      const bkashMigrationPath = path.join(rootDir, 'supabase/migrations/20260909_production_fixation_bkash_and_hardening.sql');
+      const bkashSql = fs.readFileSync(bkashMigrationPath, 'utf8');
+      expect(bkashSql).toContain('DROP TRIGGER IF EXISTS on_bkash_payment_completed ON public.payment_transactions;');
+      expect(bkashSql).toContain('DROP FUNCTION IF EXISTS public.handle_completed_bkash_payment();');
+    });
+
+    it('P0-03 & P2-08: should verify subscription_plans catalog seed has canonical pricing and 365-day durations', () => {
+      const v4MigrationPath = path.join(rootDir, 'supabase/migrations/20260910_security_audit_fixations_v4.sql');
+      const sql = fs.readFileSync(v4MigrationPath, 'utf8');
+
+      expect(sql).toContain("('Free', 'Free Starter Plan', 0, 'BDT', 365, true)");
+      expect(sql).toContain("('Explorer', 'University Discovery (Explorer Plan)', 1490, 'BDT', 365, true)");
+      expect(sql).toContain("('Application', 'Application Assistant (Application Plan)', 3990, 'BDT', 365, true)");
+      expect(sql).toContain("('Complete', 'Complete Strategy (Complete Plan)', 7990, 'BDT', 365, true)");
+      expect(sql).toContain("('School', 'Institutional License (School Tier)', 19990, 'BDT', 365, true)");
+    });
+
+    it('P1-09: should verify persistent distributed anonymous AI quota table and RPC definition', () => {
+      const v4MigrationPath = path.join(rootDir, 'supabase/migrations/20260910_security_audit_fixations_v4.sql');
+      const sql = fs.readFileSync(v4MigrationPath, 'utf8');
+
+      expect(sql).toContain('CREATE TABLE IF NOT EXISTS public.ai_usage_anonymous');
+      expect(sql).toContain('check_and_increment_anonymous_quota(');
+      expect(sql).toContain('GRANT EXECUTE ON FUNCTION public.check_and_increment_anonymous_quota(TEXT, DATE, INTEGER) TO service_role;');
+
+      const aiGatewayPath = path.join(rootDir, 'supabase/functions/ai-gateway/index.ts');
+      const code = fs.readFileSync(aiGatewayPath, 'utf8');
+
+      expect(code).toContain('check_and_increment_anonymous_quota');
+      expect(code).toContain('hashIp(clientIp)');
+      expect(code).toContain('Quota Reservation Policy (Policy A)');
+    });
+
+    it('P1-10: should verify AI Gateway CORS enforces domain allowlist and rejects wildcard', () => {
+      const aiGatewayPath = path.join(rootDir, 'supabase/functions/ai-gateway/index.ts');
+      const code = fs.readFileSync(aiGatewayPath, 'utf8');
+
+      expect(code).toContain('export function getCorsHeaders(req: Request)');
+      expect(code).toContain('APP_ALLOWED_ORIGINS');
+      expect(code).toContain('APP_BASE_URL');
+      expect(code).not.toContain('"Access-Control-Allow-Origin": "*"');
+    });
+
+    it('P1-12 & P1-16: should verify buildStoragePath generates immutable random UUID object keys', () => {
+      const path1 = StorageService.buildStoragePath('user-123', 'doc-456', 'My Transcript.PDF', 1);
+      const path2 = StorageService.buildStoragePath('user-123', 'doc-456', 'My Transcript.PDF', 1);
+
+      // Matches {userId}/{docId}/v{version}/{uuid}.pdf
+      expect(path1).toMatch(/^user-123\/doc-456\/v1\/[a-f0-9-]+\.pdf$/);
+      expect(path2).toMatch(/^user-123\/doc-456\/v1\/[a-f0-9-]+\.pdf$/);
+      // Ensures unique object IDs to prevent overwriting
+      expect(path1).not.toBe(path2);
+
+      // Deterministic override check
+      const fixedPath = StorageService.buildStoragePath('u1', 'd1', 'resume.pdf', 2, 'custom-uuid');
+      expect(fixedPath).toBe('u1/d1/v2/custom-uuid.pdf');
+    });
+
+    it('P1-17: should verify createExpiringShareLink fails closed on signed URL or database registration error', () => {
+      const storagePath = path.join(rootDir, 'src/services/storageService.ts');
+      const code = fs.readFileSync(storagePath, 'utf8');
+
+      expect(code).toContain('throw new Error(`Failed to generate signed cloud URL');
+      expect(code).toContain('throw new Error(`Failed to register document share link: ${dbError.message}`);');
+      expect(code).toContain('catch (err: any) {');
+      expect(code).toContain('throw err;');
+    });
+
+    it('P2-01: should verify AuthService.loginAsDemo throws in production environment', () => {
+      const originalEnv = process.env.NODE_ENV;
+      try {
+        process.env.NODE_ENV = 'production';
+        expect(() => AuthService.loginAsDemo(0)).toThrow(/DEMO_AUTH_DISABLED/i);
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
+    });
+
+    it('P1-03 & P1-04: should verify PaymentService eliminates localStorage fallbacks in production', async () => {
+      const originalEnv = process.env.NODE_ENV;
+      try {
+        process.env.NODE_ENV = 'production';
+        const txs = await PaymentService.getTransactions('usr-prod-test');
+        expect(txs).toEqual([]);
+
+        const updated = await PaymentService.adminUpdateTransaction('tx-prod-test', 'success');
+        expect(updated).toBe(false);
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
+    });
+
+    it('P1-07: should verify school route guard strictly requires institutional role without tier fallback', () => {
+      const appPath = path.join(rootDir, 'src/App.tsx');
+      const appCode = fs.readFileSync(appPath, 'utf8');
+
+      expect(appCode).toContain("currentUser.role === 'school_admin' ||");
+      expect(appCode).toContain("currentUser.role === 'counselor' ||");
+      expect(appCode).toContain("Boolean(currentUser.roles?.includes('school_admin'))");
+      expect(appCode).not.toContain("currentUser.tier === 'School';");
+
+      const sidebarPath = path.join(rootDir, 'src/components/layout/Sidebar.tsx');
+      const sidebarCode = fs.readFileSync(sidebarPath, 'utf8');
+      expect(sidebarCode).not.toContain("userTier === 'School';");
+    });
+
+    it('P1-18: should verify README.md removes unverified AES-GCM claims and details RLS & signed URLs', () => {
+      const readmePath = path.join(rootDir, 'README.md');
+      const readme = fs.readFileSync(readmePath, 'utf8');
+
+      expect(readme).not.toContain('AES-GCM 256-bit Encryption');
+      expect(readme).toContain('User-Isolated Cloud Storage');
+      expect(readme).toContain('Signed Ephemeral URLs');
+      expect(readme).toContain('Row Level Security (RLS)');
     });
   });
 });

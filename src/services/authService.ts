@@ -385,6 +385,14 @@ export class AuthService {
    * Test-drive an instant demo profile without passwords
    */
   public static loginAsDemo(sampleIndex: number = 0): UserAccount {
+    const isProduction =
+      (typeof import.meta !== 'undefined' && import.meta.env && (import.meta.env.PROD || import.meta.env.VITE_ENVIRONMENT === 'production')) ||
+      (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'production');
+
+    if (isProduction) {
+      throw new Error('DEMO_AUTH_DISABLED: Instant demo authentication is disabled in production environments.');
+    }
+
     const sample = SAMPLE_PROFILES[sampleIndex] || SAMPLE_PROFILES[0];
     const demoId = `usr-demo-${sampleIndex}`;
 

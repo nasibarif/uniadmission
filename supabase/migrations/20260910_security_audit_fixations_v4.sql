@@ -245,14 +245,14 @@ CREATE POLICY "Anyone can read active subscription plans"
   ON public.subscription_plans FOR SELECT
   USING (active = true);
 
--- Seed authoritative catalog
+-- Seed authoritative catalog with canonical prices and 365-day durations (P0-03, P0-07, P2-08)
 INSERT INTO public.subscription_plans (id, name, amount_bdt, currency, duration_days, active)
 VALUES 
-  ('Free', 'Free Plan', 0, 'BDT', 365, true),
-  ('Explorer', 'Explorer Plan', 999, 'BDT', 30, true),
-  ('Application', 'Application Plan', 2499, 'BDT', 90, true),
-  ('Complete', 'Complete Plan', 4999, 'BDT', 365, true),
-  ('School', 'School/Counselor Plan', 14999, 'BDT', 365, true)
+  ('Free', 'Free Starter Plan', 0, 'BDT', 365, true),
+  ('Explorer', 'University Discovery (Explorer Plan)', 1490, 'BDT', 365, true),
+  ('Application', 'Application Assistant (Application Plan)', 3990, 'BDT', 365, true),
+  ('Complete', 'Complete Strategy (Complete Plan)', 7990, 'BDT', 365, true),
+  ('School', 'Institutional License (School Tier)', 19990, 'BDT', 365, true)
 ON CONFLICT (id) DO UPDATE 
 SET 
   name = EXCLUDED.name,
@@ -260,6 +260,11 @@ SET
   duration_days = EXCLUDED.duration_days,
   active = EXCLUDED.active,
   updated_at = NOW();
+
+-- Explicitly drop legacy bKash trigger and procedure to prevent dual fulfillment (P0-02, P0-03)
+DROP TRIGGER IF EXISTS on_bkash_payment_completed ON public.payment_transactions;
+DROP TRIGGER IF EXISTS trg_completed_bkash_payment ON public.payment_transactions;
+DROP FUNCTION IF EXISTS public.handle_completed_bkash_payment();
 
 -- ============================================================================
 -- 7. Authoritative Payment Fulfillment RPC (P0-01, P0-02, P0-03)
@@ -415,3 +420,80 @@ REVOKE EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, 
 REVOKE EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB) FROM anon;
 REVOKE EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.fulfill_payment_transaction(TEXT, TEXT, TEXT, TEXT, JSONB) TO service_role;
+
+-- ============================================================================
+-- 8. Persistent Distributed Anonymous AI Quota (P1-09)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS public.ai_usage_anonymous (
+  ip_hash TEXT NOT NULL,
+  usage_date DATE DEFAULT CURRENT_DATE NOT NULL,
+  request_count INTEGER DEFAULT 0 NOT NULL,
+  last_request_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
+  PRIMARY KEY (ip_hash, usage_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_usage_anonymous_date ON public.ai_usage_anonymous(usage_date);
+ALTER TABLE public.ai_usage_anonymous ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Service role manages anonymous AI usage" ON public.ai_usage_anonymous;
+CREATE POLICY "Service role manages anonymous AI usage"
+  ON public.ai_usage_anonymous FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
+
+CREATE OR REPLACE FUNCTION public.check_and_increment_anonymous_quota(
+  p_ip_hash TEXT,
+  p_usage_date DATE,
+  p_limit INTEGER
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_new_count INTEGER := 0;
+  v_allowed BOOLEAN := false;
+  v_remaining INTEGER := 0;
+BEGIN
+  INSERT INTO public.ai_usage_anonymous (ip_hash, usage_date, request_count, last_request_at)
+  VALUES (p_ip_hash, p_usage_date, 0, NOW())
+  ON CONFLICT (ip_hash, usage_date) DO NOTHING;
+
+  UPDATE public.ai_usage_anonymous
+  SET 
+    request_count = request_count + 1,
+    last_request_at = NOW()
+  WHERE ip_hash = p_ip_hash
+    AND usage_date = p_usage_date
+    AND request_count < p_limit
+  RETURNING request_count INTO v_new_count;
+
+  IF FOUND THEN
+    v_allowed := true;
+    v_remaining := GREATEST(0, p_limit - v_new_count);
+  ELSE
+    SELECT request_count INTO v_new_count
+    FROM public.ai_usage_anonymous
+    WHERE ip_hash = p_ip_hash AND usage_date = p_usage_date;
+
+    v_allowed := false;
+    v_remaining := 0;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'allowed', v_allowed,
+    'count', COALESCE(v_new_count, p_limit),
+    'remaining', v_remaining,
+    'limit', p_limit
+  );
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION public.check_and_increment_anonymous_quota(TEXT, DATE, INTEGER) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.check_and_increment_anonymous_quota(TEXT, DATE, INTEGER) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.check_and_increment_anonymous_quota(TEXT, DATE, INTEGER) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.check_and_increment_anonymous_quota(TEXT, DATE, INTEGER) TO service_role;
+

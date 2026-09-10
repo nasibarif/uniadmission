@@ -6,13 +6,46 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "X-Content-Type-Options": "nosniff",
-  "X-Frame-Options": "DENY",
-  "Referrer-Policy": "strict-origin-when-cross-origin",
-};
+export function getCorsHeaders(req: Request) {
+  const origin = req.headers.get("origin") || "";
+  const allowedOriginsEnv = Deno.env.get("APP_ALLOWED_ORIGINS") || "";
+  const configuredOrigins = allowedOriginsEnv
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+  const appBaseUrl = Deno.env.get("APP_BASE_URL") || "";
+
+  const allowedOrigins = [
+    ...configuredOrigins,
+    appBaseUrl,
+    "https://uniadmission.com",
+    "https://uniadmission.vercel.app",
+  ].filter(Boolean);
+
+  const isDev = Deno.env.get("ENVIRONMENT") === "development";
+  const isAllowed = Boolean(origin) && (
+    allowedOrigins.includes(origin) || (isDev && origin.startsWith("http://localhost"))
+  );
+
+  return {
+    "Access-Control-Allow-Origin": isAllowed ? origin : "",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Vary": "Origin",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+  };
+}
+
+export async function hashIp(ip: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(ip);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 // Daily request limits per subscription tier
 export const TIER_DAILY_LIMITS: Record<string, number> = {
@@ -71,6 +104,8 @@ function checkLocalDailyLimit(userId: string, tier: string, overrideLimit?: numb
 }
 
 serve(async (req: Request) => {
+  const corsHeaders = getCorsHeaders(req);
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -253,7 +288,10 @@ serve(async (req: Request) => {
       );
     }
 
-    // 4. Rate limiting: Persistent ai_usage_daily atomic quota check
+    // 4. Rate limiting: Persistent ai_usage_daily & ai_usage_anonymous atomic quota check (P1-09)
+    // Quota Reservation Policy (Policy A):
+    // Request count is incremented atomically upfront to prevent race conditions and concurrent abuse.
+    // Token accounting is performed asynchronously upon successful completion via record_ai_token_usage RPC.
     let remainingQuota = 0;
     const dailyLimit = TIER_DAILY_LIMITS[tier] || TIER_DAILY_LIMITS.Free;
     const today = new Date().toISOString().split("T")[0];
@@ -261,21 +299,117 @@ serve(async (req: Request) => {
 
     if (userId === "anonymous") {
       const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("cf-connecting-ip") || "anon_client";
-      const anonKey = `anon_${clientIp}`;
-      const anonCheck = checkLocalDailyLimit(anonKey, "Anonymous", 2);
-      if (!anonCheck.allowed) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: {
-              code: "ANON_QUOTA_EXCEEDED",
-              message: "Anonymous daily quota reached (2 requests/day). Please sign in to continue using UniAdmission AI.",
-            },
-          }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+      const ipHash = await hashIp(clientIp);
+      const anonKey = `anon_${ipHash}`;
+
+      if (supabaseAdmin) {
+        try {
+          const { data: anonData, error: anonErr } = await supabaseAdmin.rpc("check_and_increment_anonymous_quota", {
+            p_ip_hash: ipHash,
+            p_usage_date: today,
+            p_limit: 2,
+          });
+
+          if (!anonErr && anonData) {
+            if (!anonData.allowed) {
+              return new Response(
+                JSON.stringify({
+                  success: false,
+                  error: {
+                    code: "ANON_QUOTA_EXCEEDED",
+                    message: "Anonymous daily quota reached (2 requests/day). Please sign in to continue using UniAdmission AI.",
+                  },
+                }),
+                { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+              );
+            }
+            remainingQuota = anonData.remaining ?? Math.max(0, 2 - (anonData.count || 1));
+          } else {
+            if (isProd) {
+              console.error("[ai-gateway] check_and_increment_anonymous_quota failed in production:", anonErr?.message);
+              return new Response(
+                JSON.stringify({
+                  success: false,
+                  error: {
+                    code: "AI_QUOTA_SERVICE_UNAVAILABLE",
+                    message: "AI anonymous quota verification service is temporarily unavailable.",
+                  },
+                }),
+                { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+              );
+            }
+            const anonCheck = checkLocalDailyLimit(anonKey, "Anonymous", 2);
+            if (!anonCheck.allowed) {
+              return new Response(
+                JSON.stringify({
+                  success: false,
+                  error: {
+                    code: "ANON_QUOTA_EXCEEDED",
+                    message: "Anonymous daily quota reached (2 requests/day). Please sign in to continue using UniAdmission AI.",
+                  },
+                }),
+                { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+              );
+            }
+            remainingQuota = anonCheck.remaining;
+          }
+        } catch (err: any) {
+          console.error("[ai_usage_anonymous] Database quota error:", err?.message);
+          if (isProd) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                error: {
+                  code: "AI_QUOTA_SERVICE_UNAVAILABLE",
+                  message: "AI anonymous quota verification service is temporarily unavailable.",
+                },
+              }),
+              { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+          const anonCheck = checkLocalDailyLimit(anonKey, "Anonymous", 2);
+          if (!anonCheck.allowed) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                error: {
+                  code: "ANON_QUOTA_EXCEEDED",
+                  message: "Anonymous daily quota reached (2 requests/day). Please sign in to continue using UniAdmission AI.",
+                },
+              }),
+              { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+          remainingQuota = anonCheck.remaining;
+        }
+      } else {
+        if (isProd) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: {
+                code: "AI_QUOTA_SERVICE_UNAVAILABLE",
+                message: "AI quota verification service is unconfigured in production environment.",
+              },
+            }),
+            { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        const anonCheck = checkLocalDailyLimit(anonKey, "Anonymous", 2);
+        if (!anonCheck.allowed) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: {
+                code: "ANON_QUOTA_EXCEEDED",
+                message: "Anonymous daily quota reached (2 requests/day). Please sign in to continue using UniAdmission AI.",
+              },
+            }),
+            { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        remainingQuota = anonCheck.remaining;
       }
-      remainingQuota = anonCheck.remaining;
     } else if (supabaseAdmin) {
       try {
         // Attempt atomic single-transaction quota check and increment via PostgreSQL RPC

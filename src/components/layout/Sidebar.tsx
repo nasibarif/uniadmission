@@ -30,9 +30,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onCloseMobile }) => {
   const isSchoolUser =
     currentUser?.role === 'school_admin' ||
     currentUser?.role === 'counselor' ||
-    currentUser?.roles?.includes('school_admin') ||
-    currentUser?.roles?.includes('counselor') ||
-    userTier === 'School';
+    Boolean(currentUser?.roles?.includes('school_admin')) ||
+    Boolean(currentUser?.roles?.includes('counselor'));
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard Overview', icon: LayoutDashboard, badge: null, minTier: 'Free' },

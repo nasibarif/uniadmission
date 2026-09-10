@@ -115,10 +115,13 @@ export class StorageService {
     userId: string,
     docId: string,
     fileName: string,
-    version = 1
+    version = 1,
+    objectId: string = crypto.randomUUID()
   ): string {
     const cleanFileName = sanitizeFilename(fileName);
-    return `${userId}/${docId}/v${version}/${cleanFileName}`;
+    const lastDot = cleanFileName.lastIndexOf('.');
+    const ext = lastDot !== -1 ? cleanFileName.slice(lastDot).toLowerCase() : '';
+    return `${userId}/${docId}/v${version}/${objectId}${ext}`;
   }
 
   /**
@@ -307,26 +310,31 @@ export class StorageService {
     let shareUrl: string | null = null;
     if (isSupabaseConfigured() && supabase) {
       try {
-        const { data } = await supabase.storage
+        const { data, error: signError } = await supabase.storage
           .from(BUCKET_NAME)
           .createSignedUrl(storagePath, expiresInMinutes * 60);
-        if (data?.signedUrl) {
-          shareUrl = data.signedUrl;
+        if (signError || !data?.signedUrl) {
+          throw new Error(`Failed to generate signed cloud URL: ${signError?.message || 'Unknown error'}`);
         }
+        shareUrl = data.signedUrl;
 
-        // Persistent share link registration with hashed token (P1-04)
+        // Persistent share link registration with hashed token (P1-04, P1-17)
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
           const tokenHash = await this.hashShareToken(token);
-          await supabase.from('document_share_links').insert({
+          const { error: dbError } = await supabase.from('document_share_links').insert({
             document_id: storagePath,
             owner_user_id: user.id,
             token_hash: tokenHash,
             expires_at: expiresAt,
           });
+          if (dbError) {
+            throw new Error(`Failed to register document share link: ${dbError.message}`);
+          }
         }
-      } catch (err) {
-        console.warn('[StorageService] Error creating signed share URL or registering link:', err);
+      } catch (err: any) {
+        console.error('[StorageService] Error creating signed share URL or registering link:', err);
+        throw err;
       }
     }
 

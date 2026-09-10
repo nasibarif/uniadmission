@@ -127,9 +127,8 @@ const MainLayout: React.FC = () => {
         const isSchoolUser =
           currentUser.role === 'school_admin' ||
           currentUser.role === 'counselor' ||
-          currentUser.roles?.includes('school_admin') ||
-          currentUser.roles?.includes('counselor') ||
-          currentUser.tier === 'School';
+          Boolean(currentUser.roles?.includes('school_admin')) ||
+          Boolean(currentUser.roles?.includes('counselor'));
 
         if (!isSchoolUser) {
           return (

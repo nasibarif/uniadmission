@@ -208,6 +208,14 @@ export class PaymentService {
       }
     }
 
+    const isProduction =
+      (typeof import.meta !== 'undefined' && import.meta.env && (import.meta.env.PROD || import.meta.env.VITE_ENVIRONMENT === 'production')) ||
+      (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'production');
+
+    if (isProduction) {
+      return [];
+    }
+
     // Local fallback for offline/development environments
     const all = this.getLocalTransactions();
     if (userId) {
@@ -243,6 +251,14 @@ export class PaymentService {
       } catch (err) {
         console.warn('Admin transaction update error:', err);
       }
+    }
+
+    const isProduction =
+      (typeof import.meta !== 'undefined' && import.meta.env && (import.meta.env.PROD || import.meta.env.VITE_ENVIRONMENT === 'production')) ||
+      (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'production');
+
+    if (isProduction) {
+      return false;
     }
 
     // Update local storage record if present

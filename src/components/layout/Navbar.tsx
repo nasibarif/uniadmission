@@ -44,6 +44,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     setActiveTab 
   } = useApp();
 
+  const isProduction = import.meta.env.PROD || import.meta.env.VITE_ENVIRONMENT === 'production';
+
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [importStatus, setImportStatus] = useState<string | null>(null);
@@ -288,30 +290,32 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </div>
 
                   {/* Demo account switcher */}
-                  <div className="px-4 py-2 border-t border-slate-100 bg-slate-50/50">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                      Switch / Test Demo Profiles
-                    </p>
-                    <div className="space-y-1">
-                      {SAMPLE_PROFILES.map((sample, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => {
-                            loginAsDemo(idx);
-                            setIsUserMenuOpen(false);
-                          }}
-                          className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-white text-xs flex items-center justify-between border border-transparent hover:border-slate-200 transition"
-                        >
-                          <span className="font-semibold text-slate-800 text-[11px] truncate">
-                            {sample.name} ({sample.profile.academic.qualification})
-                          </span>
-                          <span className="text-[10px] text-blue-600 font-bold">
-                            {sample.tag}
-                          </span>
-                        </button>
-                      ))}
+                  {!isProduction && (
+                    <div className="px-4 py-2 border-t border-slate-100 bg-slate-50/50">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Switch / Test Demo Profiles
+                      </p>
+                      <div className="space-y-1">
+                        {SAMPLE_PROFILES.map((sample, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => {
+                              loginAsDemo(idx);
+                              setIsUserMenuOpen(false);
+                            }}
+                            className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-white text-xs flex items-center justify-between border border-transparent hover:border-slate-200 transition"
+                          >
+                            <span className="font-semibold text-slate-800 text-[11px] truncate">
+                              {sample.name} ({sample.profile.academic.qualification})
+                            </span>
+                            <span className="text-[10px] text-blue-600 font-bold">
+                              {sample.tag}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* Sign Out Button */}
                   <div className="px-3 pt-2 border-t border-slate-100">

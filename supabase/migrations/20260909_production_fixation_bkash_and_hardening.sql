@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS public.payment_transactions (
   provider_payment_id TEXT NOT NULL,
   provider_transaction_id TEXT UNIQUE, -- bKash TrxID, guaranteed unique
   customer_account TEXT,               -- bKash sender wallet (01XXXXXXXXX)
-  plan_id TEXT NOT NULL CHECK (plan_id IN ('Free', 'Explorer', 'Application', 'Complete')),
+  plan_id TEXT NOT NULL CHECK (plan_id IN ('Free', 'Explorer', 'Application', 'Complete', 'School')),
   amount NUMERIC NOT NULL CHECK (amount >= 0),
   currency TEXT NOT NULL DEFAULT 'BDT' CHECK (currency = 'BDT'),
   status TEXT NOT NULL DEFAULT 'initiated' CHECK (
@@ -104,74 +104,9 @@ CREATE POLICY "Users can view their own AI usage"
   USING (auth.uid() = user_id);
 
 -- ============================================================================
--- 5. Trigger: Elevate Subscription & Profile on Completed bKash Payment
+-- 5. Single Fulfillment Path Enforcement (P0-02, P0-03)
 -- ============================================================================
-CREATE OR REPLACE FUNCTION public.handle_completed_bkash_payment()
-RETURNS TRIGGER AS $$
-BEGIN
-  IF (NEW.status = 'completed' AND (OLD.status IS NULL OR OLD.status <> 'completed')) THEN
-    -- Upsert active subscription for user
-    INSERT INTO public.subscriptions (
-      user_id,
-      plan_id,
-      status,
-      amount_bdt,
-      currency,
-      payment_provider,
-      subscription_id,
-      current_period_start,
-      current_period_end,
-      metadata,
-      updated_at
-    )
-    VALUES (
-      NEW.user_id,
-      NEW.plan_id,
-      'active',
-      NEW.amount,
-      'BDT',
-      'bkash',
-      COALESCE(NEW.provider_transaction_id, NEW.provider_payment_id),
-      NOW(),
-      NOW() + INTERVAL '30 days',
-      jsonb_build_object(
-        'payment_id', NEW.provider_payment_id,
-        'trx_id', NEW.provider_transaction_id,
-        'customer_account', NEW.customer_account
-      ),
-      NOW()
-    )
-    ON CONFLICT (subscription_id) DO UPDATE SET
-      status = 'active',
-      plan_id = EXCLUDED.plan_id,
-      amount_bdt = EXCLUDED.amount_bdt,
-      updated_at = NOW();
-
-    -- Also sync directly to profiles.tier for immediate consistency
-    UPDATE public.profiles
-    SET tier = NEW.plan_id,
-        updated_at = TIMEZONE('utc'::text, NOW())
-    WHERE id = NEW.user_id;
-
-    -- Grant default entitlements based on plan
-    INSERT INTO public.entitlements (user_id, feature, enabled, expires_at)
-    VALUES 
-      (NEW.user_id, 'ai_counselor', true, NOW() + INTERVAL '30 days'),
-      (NEW.user_id, 'sop_assistant', true, NOW() + INTERVAL '30 days'),
-      (NEW.user_id, 'unlimited_documents', true, NOW() + INTERVAL '30 days')
-    ON CONFLICT (user_id, feature) DO UPDATE SET
-      enabled = true,
-      expires_at = EXCLUDED.expires_at,
-      updated_at = NOW();
-  END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Harden function search path
-ALTER FUNCTION public.handle_completed_bkash_payment() SET search_path = public, pg_temp;
-
+-- Legacy trigger and function dropped. All payment fulfillments route strictly
+-- through public.fulfill_payment_transaction with server-authoritative catalog duration.
 DROP TRIGGER IF EXISTS on_bkash_payment_completed ON public.payment_transactions;
-CREATE TRIGGER on_bkash_payment_completed
-  AFTER INSERT OR UPDATE ON public.payment_transactions
-  FOR EACH ROW EXECUTE FUNCTION public.handle_completed_bkash_payment();
+DROP FUNCTION IF EXISTS public.handle_completed_bkash_payment();

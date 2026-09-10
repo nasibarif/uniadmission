@@ -34,9 +34,9 @@
 - **Real-Time Countdown Timers**: Tracks application lead times (SOP drafting, LOR requests, financial solvency docs).
 
 ### 5. Secure Document Vault (`/#/vault`)
-- **AES-GCM 256-bit Encryption**: End-to-end client-side document encryption with user-isolated cryptographic keys.
-- **AI Document Pre-Check**: Automated validation verifying file readability, document type match, and issuing authority verification.
-- **Multi-Level Privacy & Expiring Links**: Granular access control (`Private`, `Verified Institutional Staff`, `Public Link with PIN`) and tamper-evident audit logging.
+- **User-Isolated Cloud Storage**: Supabase Storage with Row Level Security (RLS), path isolation, and comprehensive file validation (magic byte and extension whitelist).
+- **Signed Ephemeral URLs**: Short-lived 15-minute presigned download URLs preventing unauthorized object access.
+- **Expiring Share Links & Auditability**: Granular access control (`Private`, `Verified Institutional Staff`, `Expiring Share Link`) backed by SHA-256 hashed share tokens and tamper-evident audit logging.
 
 ### 6. Grounded AI Tools & Counseling (`/#/counselor`, `/#/sop`, `/#/cv`)
 - **Data-Grounded AI Counselor**: 24/7 strategic admissions advising strictly grounded in verified database facts. Distinguishes verified catalog facts from strategic recommendations.
